@@ -16,7 +16,7 @@ func (q QuoteString) MarshalJSON() ([]byte, error) {
 
 type ColorGroup struct {
 	ID     int         `json:"id,string"`
-	Name   QuoteString `json:"name,quoted"`
+	Name   QuoteString `json:"name"`
 	Colors []string
 }
 
