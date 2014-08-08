@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 const primeRK = 16777619
 
 // hashstr returns the hash and the appropriate multiplicative
@@ -45,8 +43,28 @@ func Index(s, sep string) int {
 	return -1
 }
 
+func IndexFuck(s, sep string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep[0] {
+			is := true
+			j := 0
+			for ; j < len(sep); j++ {
+				if sep[j] != s[i] {
+					is = false
+					break
+				}
+			}
+			if is {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 func main() {
 	a := "hello, world"
 	aa := "ll"
 	println(Index(a, aa))
+	println(IndexFuck(a, aa))
 }
