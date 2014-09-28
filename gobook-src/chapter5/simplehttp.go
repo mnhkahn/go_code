@@ -1,10 +1,11 @@
 package main
 
 import (
-	"net"
-	"os"
 	"bytes"
 	"fmt"
+	"io"
+	"net"
+	"os"
 )
 
 func main() {
@@ -17,7 +18,7 @@ func main() {
 	conn, err := net.Dial("tcp", service)
 	checkError(err)
 
-	_, err = conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
+	_, err = conn.Write([]byte("POST / HTTP/1.0\nUser-Agent: Cyeam\nContent-Length: 4\n\nBody\r\n\r\n"))
 	checkError(err)
 
 	result, err := readFully(conn)
