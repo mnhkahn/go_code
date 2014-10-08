@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/astaxie/beego/httplib"
 	"go_code/wallpaper/win32api"
+	"time"
 )
 
 const bingURL = `http://cn.bing.com`
@@ -17,14 +18,15 @@ func main() {
 
 	if len(v.Images) > 0 && err == nil {
 		pic := httplib.Get(bingURL + v.Images[0].Url)
-		fmt.Println(pic)
-		// err = pic.ToFile(file_path)
+		// fmt.Println(pic)
+		err = pic.ToFile(file_path)
 		if err != nil {
 			fmt.Println(err)
+		} else {
+			time.Sleep(5000)
+			fmt.Println(win32api.SetWallPaper(file_path))
 		}
 	}
-
-	fmt.Println(win32api.SetWallPaper(file_path))
 }
 
 type Bing struct {
