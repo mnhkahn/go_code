@@ -10,12 +10,13 @@ import (
 
 const bingURL = `http://cn.bing.com`
 const file_path = `C:\Users\Public\Pictures\wallpaper.jpg`
+const file_path1 = `/tmp/wallpaper.jpg`
 
 func main() {
 	v := Bing{}
 	req := httplib.Get("http://www.bing.com/HPImageArchive.aspx?format=json&idx=0&n=1")
 	err := req.ToXml(&v)
-
+	fmt.Println(runtime.GOOS)
 	if len(v.Images) > 0 && err == nil {
 		pic := httplib.Get(bingURL + v.Images[0].Url)
 		// fmt.Println(pic)
