@@ -3,17 +3,21 @@ package main
 import (
 	"fmt"
 	"github.com/franela/goreq"
+	"time"
 )
 
 func main() {
-	item := AddSolr{}
-	item.Add.Doc.Id = "1234"
-	item.Add.Doc.Title = "5678"
-	item.Add.Overwrite = true
-	item.Add.CommitWithin = 1000
+	// Add()
+	Del()
+}
+
+func Del() {
+	item := DelSolr{}
+	item.Del.Query = `title:cyeam.com`
+	item.Del.CommitWithin = 1000
 	req := goreq.Request{
 		Method:      "POST",
-		Uri:         "http://128.199.131.129:8983/solr/post/update?wt=json",
+		Uri:         "http:///solr/post/update?wt=json",
 		ContentType: "application/json",
 		Body:        item,
 		// Proxy:       "http://127.0.0.1:8888",
@@ -24,7 +28,30 @@ func main() {
 		return
 	}
 	str, _ := res.Body.ToString()
-	fmt.Println("success", str)
+	fmt.Println("del success", str)
+
+}
+
+func Add() {
+	item := AddSolr{}
+	item.Add.Doc.Link = time.Now().String()
+	item.Add.Doc.Title = "cyeam.com"
+	item.Add.Overwrite = true
+	item.Add.CommitWithin = 1000
+	req := goreq.Request{
+		Method:      "POST",
+		Uri:         "http:///solr/post/update?wt=json",
+		ContentType: "application/json",
+		Body:        item,
+		// Proxy:       "http://127.0.0.1:8888",
+	}
+	res, err := req.Do()
+	if err != nil {
+		fmt.Println(err, "*****")
+		return
+	}
+	str, _ := res.Body.ToString()
+	fmt.Println("add success", str)
 }
 
 type AddSolr struct {
@@ -36,6 +63,13 @@ type AddSolr struct {
 }
 
 type SolrModel struct {
-	Id    string `json:"id"`
+	Link  string `json:"link"`
 	Title string `json:"title"`
+}
+
+type DelSolr struct {
+	Del struct {
+		Query        string `json:"query"`
+		CommitWithin int    `json:"commitWithin"`
+	} `json:"delete"`
 }
