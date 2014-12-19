@@ -7,9 +7,12 @@ import (
 func TestMain(t *testing.T) {
 	g := create_example_lgraph()
 	g.Print()
-	if len(g.Adjacent()) != 7 {
-		t.Error("length error! want 7 but got", len(g.Adjacent()))
-	}
+	// println("Bfs.............")
+	// bfs_v := g.Bfs()
+	// for i := 0; i < len(bfs_v); i++ {
+	// 	println(bfs_v[i].Data)
+	// }
+	// bfs_res := []string{"A", "B", "C", "E", "F", "D", "G"}
 }
 
 func create_example_lgraph() *Graph {

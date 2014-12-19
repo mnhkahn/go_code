@@ -66,36 +66,40 @@ func (this *Graph) IsEmpty() bool {
 	return false
 }
 
-func (this *Graph) Adjacent() []Vertex {
-	return this.adj
+func (this *Graph) Adjacent(v Vertex) []Vertex {
+	res := make([]Vertex, 0)
+	p := this.adj[this.get_position(v.Data)].e
+	for ; p != nil; p = p.next {
+		res = append(res, this.adj[p.ivex])
+	}
+	return res
 }
 
-func (this *Graph) Traverse() []Vertex {
+func (this *Graph) Dfs() []Vertex {
 	return nil
 }
 
-func (this *Graph) dfs() []Vertex {
-	return nil
-}
+func (this *Graph) Bfs() []Vertex {
+	res := make([]Vertex, 0)
+	for _, v := range this.adj {
+		adjs := this.Adjacent(v)
+		for _, a := range adjs {
 
-func (this *Graph) bfs() []Vertex {
-	return nil
+		}
+	}
+	return res
 }
 
 /*
  * 打印邻接表图
  */
 func (this *Graph) Print() {
-	var node *Edge = nil
-
 	fmt.Printf("List Graph:\n")
 	for i := 0; i < this.vexnum; i++ {
 		fmt.Printf("%d(%s): ", i, this.adj[i].Data)
-		node = this.adj[i].e
-		// fmt.Println("*************", node)
-		for node != nil {
-			fmt.Printf("%d(%s) ", node.ivex, this.adj[node.ivex].Data)
-			node = node.next
+		adjs := this.Adjacent(this.adj[i])
+		for _, a := range adjs {
+			fmt.Printf("%d(%s) ", this.get_position(a.Data), a.Data)
 		}
 		fmt.Printf("\n")
 	}
