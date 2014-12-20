@@ -112,6 +112,31 @@ func (this *Graph) Bfs() {
 	fmt.Printf("\n")
 }
 
+func (this *Graph) InDegree(v Vertex) int {
+	res := 0
+	pos := this.get_position(v.Data)
+	for _, a := range this.adj {
+		p := a.e
+		for p != nil {
+			if pos == p.ivex {
+				res++
+			}
+			p = p.next
+		}
+	}
+	return res
+}
+
+func (this *Graph) OutDegree(v Vertex) int {
+	res := 0
+	p := this.adj[this.get_position(v.Data)].e
+	for p != nil {
+		res++
+		p = p.next
+	}
+	return res
+}
+
 /*
  * 打印邻接表图
  */

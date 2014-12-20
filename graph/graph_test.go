@@ -11,7 +11,12 @@ func TestMain(t *testing.T) {
 	g.Bfs()
 	println("Dfs.............")
 	g.Dfs()
-
+	if g.InDegree(Vertex{Data: "E"}) != 2 {
+		t.Error("indegree of E wanted 2 bug got", g.InDegree(Vertex{Data: "E"}))
+	}
+	if g.OutDegree(Vertex{Data: "E"}) != 2 {
+		t.Error("outdegree of E wanted 2 bug got", g.OutDegree(Vertex{Data: "E"}))
+	}
 }
 
 func create_example_lgraph() *Graph {
