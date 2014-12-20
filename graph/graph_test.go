@@ -7,12 +7,11 @@ import (
 func TestMain(t *testing.T) {
 	g := create_example_lgraph()
 	g.Print()
-	// println("Bfs.............")
-	// bfs_v := g.Bfs()
-	// for i := 0; i < len(bfs_v); i++ {
-	// 	println(bfs_v[i].Data)
-	// }
-	// bfs_res := []string{"A", "B", "C", "E", "F", "D", "G"}
+	println("Bfs.............")
+	g.Bfs()
+	println("Dfs.............")
+	g.Dfs()
+
 }
 
 func create_example_lgraph() *Graph {

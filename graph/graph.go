@@ -75,19 +75,41 @@ func (this *Graph) Adjacent(v Vertex) []Vertex {
 	return res
 }
 
-func (this *Graph) Dfs() []Vertex {
-	return nil
+func (this *Graph) Dfs() {
+	res := map[int]Vertex{}
+	if len(this.adj) > 0 {
+		this.dfs(this.adj[0], res)
+	}
+	fmt.Printf("\n")
 }
 
-func (this *Graph) Bfs() []Vertex {
-	res := make([]Vertex, 0)
-	for _, v := range this.adj {
-		adjs := this.Adjacent(v)
-		for _, a := range adjs {
+func (this *Graph) dfs(u Vertex, res map[int]Vertex) {
+	res[this.get_position(u.Data)] = u
+	fmt.Printf("%s ", u.Data)
+	p := u.e
+	for p != nil {
+		if _, ok := res[p.ivex]; !ok {
+			this.dfs(this.adj[p.ivex], res)
+		}
+		p = p.next
+	}
+}
 
+func (this *Graph) Bfs() {
+	res := map[int]Vertex{}
+	if len(this.adj) > 0 {
+		Q := []Vertex{this.adj[0]}
+		for len(Q) != 0 {
+			u := Q[0]
+			Q = Q[1:]
+			if _, ok := res[this.get_position(u.Data)]; !ok {
+				Q = append(Q, this.Adjacent(u)...)
+				res[this.get_position(u.Data)] = u
+				fmt.Printf("%s ", u.Data)
+			}
 		}
 	}
-	return res
+	fmt.Printf("\n")
 }
 
 /*
