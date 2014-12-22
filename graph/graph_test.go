@@ -30,7 +30,8 @@ func create_example_lgraph() *Graph {
 		{"D", "C"},
 		{"E", "B"},
 		{"E", "D"},
-		{"F", "G"}}
+		{"F", "G"},
+	}
 	vlen := len(vexs)
 	elen := len(edges)
 
