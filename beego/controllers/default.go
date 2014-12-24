@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	// "fmt"
 	"github.com/astaxie/beego"
 )
 
@@ -18,4 +19,9 @@ func (this *MainController) Post() {
 	this.Data["Body"] = string(this.Ctx.Input.RequestBody)
 	println(this.Ctx.Input.RequestBody, len(this.Ctx.Input.RequestBody))
 	this.TplNames = "index.tpl"
+}
+
+func (this *MainController) HttpGzip() {
+	this.Data["json"] = this.Ctx.Request.Header
+	this.ServeJson()
 }
