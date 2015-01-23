@@ -2,13 +2,28 @@ package main
 
 import (
 	"github.com/PuerkitoBio/goquery"
+	"github.com/franela/goreq"
 	"log"
+	"time"
 )
 
 var proxys []string
 
 func main() {
-	log.Println(proxys)
+	for _, proxy := range proxys {
+		res, err := goreq.Request{
+			Uri:       "http://www.baidu.com/",
+			UserAgent: "Cyeambot",
+			Proxy:     proxy,
+			Timeout:   5 * time.Second,
+		}.Do()
+		goreq.SetConnectTimeout(5 * time.Second)
+		if err != nil || res.Body == nil {
+			log.Printf("%s fail.\n", proxy)
+		} else {
+			log.Printf("%s success.\n", proxy)
+		}
+	}
 }
 
 func InitProxys() {
