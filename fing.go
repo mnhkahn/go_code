@@ -66,7 +66,7 @@ func (this *Fing) Detect() {
 			if err == arping.ErrTimeout {
 				log.Printf("IP %s is offline.\n", nextIp)
 			} else if err != nil {
-				log.Println(err.Error())
+				log.Printf("IP %s :%s\n", nextIp, err.Error())
 			} else {
 				log.Printf("%s (%s) %d usec\n", nextIp, hwAddr, duration/1000)
 				vendor, err := Vendor(hwAddr.String())
