@@ -33,7 +33,7 @@
 #include <bio.h>
 #include <link.h>
 #include "../cmd/5l/5.out.h"
-#include "../pkg/runtime/stack.h"
+#include "../runtime/stack.h"
 
 static Prog zprg = {
 	.as = AGOK,
@@ -92,7 +92,7 @@ progedit(Link *ctxt, Prog *p)
 {
 	char literal[64];
 	LSym *s;
-	LSym *tlsfallback;
+	static LSym *tlsfallback;
 
 	p->from.class = 0;
 	p->to.class = 0;
@@ -111,19 +111,43 @@ progedit(Link *ctxt, Prog *p)
 	// Replace TLS register fetches on older ARM procesors.
 	switch(p->as) {
 	case AMRC:
-		// If the instruction matches MRC 15, 0, <reg>, C13, C0, 3, replace it.
-		if(ctxt->goarm < 7 && (p->to.offset & 0xffff0fff) == 0xee1d0f70) {
-			tlsfallback = linklookup(ctxt, "runtime.read_tls_fallback", 0);
+		// Treat MRC 15, 0, <reg>, C13, C0, 3 specially.
+		if((p->to.offset & 0xffff0fff) == 0xee1d0f70) {
+			// Because the instruction might be rewriten to a BL which returns in R0
+			// the register must be zero.
+		       	if ((p->to.offset & 0xf000) != 0)
+				ctxt->diag("%L: TLS MRC instruction must write to R0 as it might get translated into a BL instruction", p->lineno);
 
-			// BL runtime.read_tls_fallback(SB)
-			p->as = ABL;
-			p->to.type = D_BRANCH;
-			p->to.sym = tlsfallback;
-			p->to.offset = 0;
-		} else {
-			// Otherwise, MRC/MCR instructions need no further treatment.
-			p->as = AWORD;
+			if(ctxt->goarm < 7) {
+				// Replace it with BL runtime.read_tls_fallback(SB) for ARM CPUs that lack the tls extension.
+				if(tlsfallback == nil)
+					tlsfallback = linklookup(ctxt, "runtime.read_tls_fallback", 0);
+				// MOVW	LR, R11
+				p->as = AMOVW;
+				p->from.type = D_REG;
+				p->from.reg = REGLINK;
+				p->to.type = D_REG;
+				p->to.reg = REGTMP;
+
+				// BL	runtime.read_tls_fallback(SB)
+				p = appendp(ctxt, p);
+				p->as = ABL;
+				p->to.type = D_BRANCH;
+				p->to.sym = tlsfallback;
+				p->to.offset = 0;
+
+				// MOVW	R11, LR
+				p = appendp(ctxt, p);
+				p->as = AMOVW;
+				p->from.type = D_REG;
+				p->from.reg = REGTMP;
+				p->to.type = D_REG;
+				p->to.reg = REGLINK;
+				break;
+			}
 		}
+		// Otherwise, MRC/MCR instructions need no further treatment.
+		p->as = AWORD;
 		break;
 	}
 
@@ -173,15 +197,15 @@ progedit(Link *ctxt, Prog *p)
 	if(ctxt->flag_shared) {
 		// Shared libraries use R_ARM_TLS_IE32 instead of 
 		// R_ARM_TLS_LE32, replacing the link time constant TLS offset in
-		// runtime.tlsgm with an address to a GOT entry containing the 
-		// offset. Rewrite $runtime.tlsgm(SB) to runtime.tlsgm(SB) to
+		// runtime.tlsg with an address to a GOT entry containing the 
+		// offset. Rewrite $runtime.tlsg(SB) to runtime.tlsg(SB) to
 		// compensate.
-		if(ctxt->gmsym == nil)
-			ctxt->gmsym = linklookup(ctxt, "runtime.tlsgm", 0);
+		if(ctxt->tlsg == nil)
+			ctxt->tlsg = linklookup(ctxt, "runtime.tlsg", 0);
 
-		if(p->from.type == D_CONST && p->from.name == D_EXTERN && p->from.sym == ctxt->gmsym)
+		if(p->from.type == D_CONST && p->from.name == D_EXTERN && p->from.sym == ctxt->tlsg)
 			p->from.type = D_OREG;
-		if(p->to.type == D_CONST && p->to.name == D_EXTERN && p->to.sym == ctxt->gmsym)
+		if(p->to.type == D_CONST && p->to.name == D_EXTERN && p->to.sym == ctxt->tlsg)
 			p->to.type = D_OREG;
 	}
 }
@@ -233,7 +257,7 @@ nocache(Prog *p)
 static void
 addstacksplit(Link *ctxt, LSym *cursym)
 {
-	Prog *p, *pl, *q, *q1, *q2;
+	Prog *p, *pl, *p1, *p2, *q, *q1, *q2;
 	int o;
 	int32 autosize, autoffset;
 	
@@ -429,32 +453,89 @@ addstacksplit(Link *ctxt, LSym *cursym)
 			p->spadj = autosize;
 			
 			if(cursym->text->reg & WRAPPER) {
-				// g->panicwrap += autosize;
-				// MOVW panicwrap_offset(g), R3
-				// ADD $autosize, R3
-				// MOVW R3 panicwrap_offset(g)
+				// if(g->panic != nil && g->panic->argp == FP) g->panic->argp = bottom-of-frame
+				//
+				//	MOVW g_panic(g), R1
+				//	CMP $0, R1
+				//	B.EQ end
+				//	MOVW panic_argp(R1), R2
+				//	ADD $(autosize+4), R13, R3
+				//	CMP R2, R3
+				//	B.NE end
+				//	ADD $4, R13, R4
+				//	MOVW R4, panic_argp(R1)
+				// end:
+				//	NOP
+				//
+				// The NOP is needed to give the jumps somewhere to land.
+				// It is a liblink NOP, not an ARM NOP: it encodes to 0 instruction bytes.
+
 				p = appendp(ctxt, p);
 				p->as = AMOVW;
 				p->from.type = D_OREG;
 				p->from.reg = REGG;
-				p->from.offset = 2*ctxt->arch->ptrsize;
+				p->from.offset = 4*ctxt->arch->ptrsize; // G.panic
 				p->to.type = D_REG;
-				p->to.reg = 3;
+				p->to.reg = 1;
+			
+				p = appendp(ctxt, p);
+				p->as = ACMP;
+				p->from.type = D_CONST;
+				p->from.offset = 0;
+				p->reg = 1;
+			
+				p = appendp(ctxt, p);
+				p->as = ABEQ;
+				p->to.type = D_BRANCH;
+				p1 = p;
+				
+				p = appendp(ctxt, p);
+				p->as = AMOVW;
+				p->from.type = D_OREG;
+				p->from.reg = 1;
+				p->from.offset = 0; // Panic.argp
+				p->to.type = D_REG;
+				p->to.reg = 2;
 			
 				p = appendp(ctxt, p);
 				p->as = AADD;
 				p->from.type = D_CONST;
-				p->from.offset = autosize;
+				p->from.offset = autosize+4;
+				p->reg = 13;
 				p->to.type = D_REG;
 				p->to.reg = 3;
-				
+
+				p = appendp(ctxt, p);
+				p->as = ACMP;
+				p->from.type = D_REG;
+				p->from.reg = 2;
+				p->reg = 3;
+
+				p = appendp(ctxt, p);
+				p->as = ABNE;
+				p->to.type = D_BRANCH;
+				p2 = p;
+			
+				p = appendp(ctxt, p);
+				p->as = AADD;
+				p->from.type = D_CONST;
+				p->from.offset = 4;
+				p->reg = 13;
+				p->to.type = D_REG;
+				p->to.reg = 4;
+
 				p = appendp(ctxt, p);
 				p->as = AMOVW;
 				p->from.type = D_REG;
-				p->from.reg = 3;
+				p->from.reg = 4;
 				p->to.type = D_OREG;
-				p->to.reg = REGG;
-				p->to.offset = 2*ctxt->arch->ptrsize;
+				p->to.reg = 1;
+				p->to.offset = 0; // Panic.argp
+
+				p = appendp(ctxt, p);
+				p->as = ANOP;
+				p1->pcond = p;
+				p2->pcond = p;
 			}
 			break;
 
@@ -473,44 +554,6 @@ addstacksplit(Link *ctxt, LSym *cursym)
 					}
 					break;
 				}
-			}
-
-			if(cursym->text->reg & WRAPPER) {
-				int scond;
-				
-				// Preserve original RET's cond, to allow RET.EQ
-				// in the implementation of reflect.call.
-				scond = p->scond;
-				p->scond = C_SCOND_NONE;
-
-				// g->panicwrap -= autosize;
-				// MOVW panicwrap_offset(g), R3
-				// SUB $autosize, R3
-				// MOVW R3 panicwrap_offset(g)
-				p->as = AMOVW;
-				p->from.type = D_OREG;
-				p->from.reg = REGG;
-				p->from.offset = 2*ctxt->arch->ptrsize;
-				p->to.type = D_REG;
-				p->to.reg = 3;
-				p = appendp(ctxt, p);
-			
-				p->as = ASUB;
-				p->from.type = D_CONST;
-				p->from.offset = autosize;
-				p->to.type = D_REG;
-				p->to.reg = 3;
-				p = appendp(ctxt, p);
-
-				p->as = AMOVW;
-				p->from.type = D_REG;
-				p->from.reg = 3;
-				p->to.type = D_OREG;
-				p->to.reg = REGG;
-				p->to.offset = 2*ctxt->arch->ptrsize;
-				p = appendp(ctxt, p);
-
-				p->scond = scond;
 			}
 
 			p->as = AMOVW;
@@ -707,41 +750,42 @@ softfloat(Link *ctxt, LSym *cursym)
 
 		default:
 			goto notsoft;
-
-		soft:
-			if (!wasfloat || (p->mark&LABEL)) {
-				next = ctxt->arch->prg();
-				*next = *p;
-
-				// BL _sfloat(SB)
-				*p = zprg;
-				p->link = next;
-				p->as = ABL;
- 				p->to.type = D_BRANCH;
-				p->to.sym = symsfloat;
-				p->lineno = next->lineno;
-
-				p = next;
-				wasfloat = 1;
-			}
-			break;
-
-		notsoft:
-			wasfloat = 0;
 		}
+
+	soft:
+		if (!wasfloat || (p->mark&LABEL)) {
+			next = ctxt->arch->prg();
+			*next = *p;
+
+			// BL _sfloat(SB)
+			*p = zprg;
+			p->link = next;
+			p->as = ABL;
+ 				p->to.type = D_BRANCH;
+			p->to.sym = symsfloat;
+			p->lineno = next->lineno;
+
+			p = next;
+			wasfloat = 1;
+		}
+		continue;
+
+	notsoft:
+		wasfloat = 0;
 	}
 }
 
 static Prog*
 stacksplit(Link *ctxt, Prog *p, int32 framesize, int noctxt)
 {
-	int32 arg;
-
 	// MOVW			g_stackguard(g), R1
 	p = appendp(ctxt, p);
 	p->as = AMOVW;
 	p->from.type = D_OREG;
 	p->from.reg = REGG;
+	p->from.offset = 2*ctxt->arch->ptrsize;	// G.stackguard0
+	if(ctxt->cursym->cfunc)
+		p->from.offset = 3*ctxt->arch->ptrsize;	// G.stackguard1
 	p->to.type = D_REG;
 	p->to.reg = 1;
 	
@@ -820,29 +864,6 @@ stacksplit(Link *ctxt, Prog *p, int32 framesize, int noctxt)
 		p->scond = C_SCOND_NE;
 	}
 	
-	// MOVW.LS		$framesize, R1
-	p = appendp(ctxt, p);
-	p->as = AMOVW;
-	p->scond = C_SCOND_LS;
-	p->from.type = D_CONST;
-	p->from.offset = framesize;
-	p->to.type = D_REG;
-	p->to.reg = 1;
-
-	// MOVW.LS		$args, R2
-	p = appendp(ctxt, p);
-	p->as = AMOVW;
-	p->scond = C_SCOND_LS;
-	p->from.type = D_CONST;
-	arg = ctxt->cursym->text->to.offset2;
-	if(arg == 1) // special marker for known 0
-		arg = 0;
-	if(arg&3)
-		ctxt->diag("misaligned argument size in stack split");
-	p->from.offset = arg;
-	p->to.type = D_REG;
-	p->to.reg = 2;
-
 	// MOVW.LS	R14, R3
 	p = appendp(ctxt, p);
 	p->as = AMOVW;
@@ -857,7 +878,10 @@ stacksplit(Link *ctxt, Prog *p, int32 framesize, int noctxt)
 	p->as = ABL;
 	p->scond = C_SCOND_LS;
 	p->to.type = D_BRANCH;
-	p->to.sym = ctxt->symmorestack[noctxt];
+	if(ctxt->cursym->cfunc)
+		p->to.sym = linklookup(ctxt, "runtime.morestackc", 0);
+	else
+		p->to.sym = ctxt->symmorestack[noctxt];
 	
 	// BLS	start
 	p = appendp(ctxt, p);
@@ -1025,6 +1049,7 @@ loop:
 LinkArch linkarm = {
 	.name = "arm",
 	.thechar = '5',
+	.endian = LittleEndian,
 
 	.addstacksplit = addstacksplit,
 	.assemble = span5,
@@ -1052,6 +1077,7 @@ LinkArch linkarm = {
 	.D_PARAM = D_PARAM,
 	.D_SCONST = D_SCONST,
 	.D_STATIC = D_STATIC,
+	.D_OREG = D_OREG,
 
 	.ACALL = ABL,
 	.ADATA = ADATA,

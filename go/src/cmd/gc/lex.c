@@ -45,7 +45,7 @@ static struct {
 };
 
 // Debug arguments.
-// These can be specified with the -d flag, as in "-d checknil"
+// These can be specified with the -d flag, as in "-d nil"
 // to set the debug_checknil variable. In general the list passed
 // to -d can be comma-separated.
 static struct {
@@ -139,6 +139,8 @@ yy_isalnum(int c)
 #define isalnum use_yy_isalnum_instead_of_isalnum
 
 #define	DBG	if(!debug['x']){}else print
+/*c2go void DBG(char*, ...); */
+
 enum
 {
 	EOF		= -1,
@@ -310,6 +312,8 @@ main(int argc, char *argv[])
 	flagcount("u", "reject unsafe code", &safemode);
 	flagcount("v", "increase debug verbosity", &debug['v']);
 	flagcount("w", "debug type checking", &debug['w']);
+	use_writebarrier = 1;
+	flagcount("wb", "enable write barrier", &use_writebarrier);
 	flagcount("x", "debug lexer", &debug['x']);
 	flagcount("y", "debug declarations in canned imports (with -d)", &debug['y']);
 	if(thechar == '6')
@@ -317,6 +321,7 @@ main(int argc, char *argv[])
 
 	flagparse(&argc, &argv, usage);
 	ctxt->debugasm = debug['S'];
+	ctxt->debugvlog = debug['v'];
 
 	if(argc < 1)
 		usage();
@@ -339,8 +344,8 @@ main(int argc, char *argv[])
 					break;
 				}
 			}
-			if(j == nelem(debugtab))
-				fatal("unknown debug information -d '%s'\n", f[i]);
+			if(debugtab[j].name == nil)
+				sysfatal("unknown debug information -d '%s'\n", f[i]);
 		}
 	}
 
@@ -476,8 +481,12 @@ main(int argc, char *argv[])
 	}
 
 	// Phase 5: Escape analysis.
-	if(!debug['N'])
-		escapes(xtop);
+	// Required for moving heap allocations onto stack,
+	// which in turn is required by the closure implementation,
+	// which stores the addresses of stack variables into the closure.
+	// If the closure does not escape, it needs to be on the stack
+	// or else the stack copier will not update it.
+	escapes(xtop);
 	
 	// Escape analysis moved escaped values off stack.
 	// Move large values off stack too.
@@ -516,24 +525,18 @@ saveerrors(void)
 	nerrors = 0;
 }
 
-/*
- *	macro to portably read/write archive header.
- *	'cmd' is read/write/Bread/Bwrite, etc.
- */
-#define	HEADER_IO(cmd, f, h)	cmd(f, h.name, sizeof(h.name)) != sizeof(h.name)\
-				|| cmd(f, h.date, sizeof(h.date)) != sizeof(h.date)\
-				|| cmd(f, h.uid, sizeof(h.uid)) != sizeof(h.uid)\
-				|| cmd(f, h.gid, sizeof(h.gid)) != sizeof(h.gid)\
-				|| cmd(f, h.mode, sizeof(h.mode)) != sizeof(h.mode)\
-				|| cmd(f, h.size, sizeof(h.size)) != sizeof(h.size)\
-				|| cmd(f, h.fmag, sizeof(h.fmag)) != sizeof(h.fmag)
-
 static int
 arsize(Biobuf *b, char *name)
 {
 	struct ar_hdr a;
 
-	if (HEADER_IO(Bread, b, a))
+	if(Bread(b, a.name, sizeof(a.name)) != sizeof(a.name) ||
+	   Bread(b, a.date, sizeof(a.date)) != sizeof(a.date) ||
+	   Bread(b, a.uid, sizeof(a.uid)) != sizeof(a.uid) ||
+	   Bread(b, a.gid, sizeof(a.gid)) != sizeof(a.gid) ||
+	   Bread(b, a.mode, sizeof(a.mode)) != sizeof(a.mode) ||
+	   Bread(b, a.size, sizeof(a.size)) != sizeof(a.size) ||
+	   Bread(b, a.fmag, sizeof(a.fmag)) != sizeof(a.fmag))
 		return -1;
 
 	if(strncmp(a.name, name, strlen(name)) != 0)
@@ -1592,6 +1595,10 @@ go:
 		noescape = 1;
 		goto out;
 	}
+	if(strcmp(lexbuf, "go:nosplit") == 0) {
+		nosplit = 1;
+		goto out;
+	}
 	
 out:
 	return c;
@@ -1854,74 +1861,74 @@ static	struct
 /*	name		lexical		etype		op
  */
 /* basic types */
-	"int8",		LNAME,		TINT8,		OXXX,
-	"int16",	LNAME,		TINT16,		OXXX,
-	"int32",	LNAME,		TINT32,		OXXX,
-	"int64",	LNAME,		TINT64,		OXXX,
+	{"int8",		LNAME,		TINT8,		OXXX},
+	{"int16",	LNAME,		TINT16,		OXXX},
+	{"int32",	LNAME,		TINT32,		OXXX},
+	{"int64",	LNAME,		TINT64,		OXXX},
 
-	"uint8",	LNAME,		TUINT8,		OXXX,
-	"uint16",	LNAME,		TUINT16,	OXXX,
-	"uint32",	LNAME,		TUINT32,	OXXX,
-	"uint64",	LNAME,		TUINT64,	OXXX,
+	{"uint8",	LNAME,		TUINT8,		OXXX},
+	{"uint16",	LNAME,		TUINT16,	OXXX},
+	{"uint32",	LNAME,		TUINT32,	OXXX},
+	{"uint64",	LNAME,		TUINT64,	OXXX},
 
-	"float32",	LNAME,		TFLOAT32,	OXXX,
-	"float64",	LNAME,		TFLOAT64,	OXXX,
+	{"float32",	LNAME,		TFLOAT32,	OXXX},
+	{"float64",	LNAME,		TFLOAT64,	OXXX},
 
-	"complex64",	LNAME,		TCOMPLEX64,	OXXX,
-	"complex128",	LNAME,		TCOMPLEX128,	OXXX,
+	{"complex64",	LNAME,		TCOMPLEX64,	OXXX},
+	{"complex128",	LNAME,		TCOMPLEX128,	OXXX},
 
-	"bool",		LNAME,		TBOOL,		OXXX,
-	"string",	LNAME,		TSTRING,	OXXX,
+	{"bool",		LNAME,		TBOOL,		OXXX},
+	{"string",	LNAME,		TSTRING,	OXXX},
 
-	"any",		LNAME,		TANY,		OXXX,
+	{"any",		LNAME,		TANY,		OXXX},
 
-	"break",	LBREAK,		Txxx,		OXXX,
-	"case",		LCASE,		Txxx,		OXXX,
-	"chan",		LCHAN,		Txxx,		OXXX,
-	"const",	LCONST,		Txxx,		OXXX,
-	"continue",	LCONTINUE,	Txxx,		OXXX,
-	"default",	LDEFAULT,	Txxx,		OXXX,
-	"else",		LELSE,		Txxx,		OXXX,
-	"defer",	LDEFER,		Txxx,		OXXX,
-	"fallthrough",	LFALL,		Txxx,		OXXX,
-	"for",		LFOR,		Txxx,		OXXX,
-	"func",		LFUNC,		Txxx,		OXXX,
-	"go",		LGO,		Txxx,		OXXX,
-	"goto",		LGOTO,		Txxx,		OXXX,
-	"if",		LIF,		Txxx,		OXXX,
-	"import",	LIMPORT,	Txxx,		OXXX,
-	"interface",	LINTERFACE,	Txxx,		OXXX,
-	"map",		LMAP,		Txxx,		OXXX,
-	"package",	LPACKAGE,	Txxx,		OXXX,
-	"range",	LRANGE,		Txxx,		OXXX,
-	"return",	LRETURN,	Txxx,		OXXX,
-	"select",	LSELECT,	Txxx,		OXXX,
-	"struct",	LSTRUCT,	Txxx,		OXXX,
-	"switch",	LSWITCH,	Txxx,		OXXX,
-	"type",		LTYPE,		Txxx,		OXXX,
-	"var",		LVAR,		Txxx,		OXXX,
+	{"break",	LBREAK,		Txxx,		OXXX},
+	{"case",		LCASE,		Txxx,		OXXX},
+	{"chan",		LCHAN,		Txxx,		OXXX},
+	{"const",	LCONST,		Txxx,		OXXX},
+	{"continue",	LCONTINUE,	Txxx,		OXXX},
+	{"default",	LDEFAULT,	Txxx,		OXXX},
+	{"else",		LELSE,		Txxx,		OXXX},
+	{"defer",	LDEFER,		Txxx,		OXXX},
+	{"fallthrough",	LFALL,		Txxx,		OXXX},
+	{"for",		LFOR,		Txxx,		OXXX},
+	{"func",		LFUNC,		Txxx,		OXXX},
+	{"go",		LGO,		Txxx,		OXXX},
+	{"goto",		LGOTO,		Txxx,		OXXX},
+	{"if",		LIF,		Txxx,		OXXX},
+	{"import",	LIMPORT,	Txxx,		OXXX},
+	{"interface",	LINTERFACE,	Txxx,		OXXX},
+	{"map",		LMAP,		Txxx,		OXXX},
+	{"package",	LPACKAGE,	Txxx,		OXXX},
+	{"range",	LRANGE,		Txxx,		OXXX},
+	{"return",	LRETURN,	Txxx,		OXXX},
+	{"select",	LSELECT,	Txxx,		OXXX},
+	{"struct",	LSTRUCT,	Txxx,		OXXX},
+	{"switch",	LSWITCH,	Txxx,		OXXX},
+	{"type",		LTYPE,		Txxx,		OXXX},
+	{"var",		LVAR,		Txxx,		OXXX},
 
-	"append",	LNAME,		Txxx,		OAPPEND,
-	"cap",		LNAME,		Txxx,		OCAP,
-	"close",	LNAME,		Txxx,		OCLOSE,
-	"complex",	LNAME,		Txxx,		OCOMPLEX,
-	"copy",		LNAME,		Txxx,		OCOPY,
-	"delete",	LNAME,		Txxx,		ODELETE,
-	"imag",		LNAME,		Txxx,		OIMAG,
-	"len",		LNAME,		Txxx,		OLEN,
-	"make",		LNAME,		Txxx,		OMAKE,
-	"new",		LNAME,		Txxx,		ONEW,
-	"panic",	LNAME,		Txxx,		OPANIC,
-	"print",	LNAME,		Txxx,		OPRINT,
-	"println",	LNAME,		Txxx,		OPRINTN,
-	"real",		LNAME,		Txxx,		OREAL,
-	"recover",	LNAME,		Txxx,		ORECOVER,
+	{"append",	LNAME,		Txxx,		OAPPEND},
+	{"cap",		LNAME,		Txxx,		OCAP},
+	{"close",	LNAME,		Txxx,		OCLOSE},
+	{"complex",	LNAME,		Txxx,		OCOMPLEX},
+	{"copy",		LNAME,		Txxx,		OCOPY},
+	{"delete",	LNAME,		Txxx,		ODELETE},
+	{"imag",		LNAME,		Txxx,		OIMAG},
+	{"len",		LNAME,		Txxx,		OLEN},
+	{"make",		LNAME,		Txxx,		OMAKE},
+	{"new",		LNAME,		Txxx,		ONEW},
+	{"panic",	LNAME,		Txxx,		OPANIC},
+	{"print",	LNAME,		Txxx,		OPRINT},
+	{"println",	LNAME,		Txxx,		OPRINTN},
+	{"real",		LNAME,		Txxx,		OREAL},
+	{"recover",	LNAME,		Txxx,		ORECOVER},
 
-	"notwithstanding",		LIGNORE,	Txxx,		OXXX,
-	"thetruthofthematter",		LIGNORE,	Txxx,		OXXX,
-	"despiteallobjections",		LIGNORE,	Txxx,		OXXX,
-	"whereas",			LIGNORE,	Txxx,		OXXX,
-	"insofaras",			LIGNORE,	Txxx,		OXXX,
+	{"notwithstanding",		LIGNORE,	Txxx,		OXXX},
+	{"thetruthofthematter",		LIGNORE,	Txxx,		OXXX},
+	{"despiteallobjections",		LIGNORE,	Txxx,		OXXX},
+	{"whereas",			LIGNORE,	Txxx,		OXXX},
+	{"insofaras",			LIGNORE,	Txxx,		OXXX},
 };
 
 static void
@@ -2171,50 +2178,50 @@ struct
 	char*	name;
 } lexn[] =
 {
-	LANDAND,	"ANDAND",
-	LANDNOT,	"ANDNOT",
-	LASOP,		"ASOP",
-	LBREAK,		"BREAK",
-	LCASE,		"CASE",
-	LCHAN,		"CHAN",
-	LCOLAS,		"COLAS",
-	LCOMM,		"<-",
-	LCONST,		"CONST",
-	LCONTINUE,	"CONTINUE",
-	LDDD,		"...",
-	LDEC,		"DEC",
-	LDEFAULT,	"DEFAULT",
-	LDEFER,		"DEFER",
-	LELSE,		"ELSE",
-	LEQ,		"EQ",
-	LFALL,		"FALL",
-	LFOR,		"FOR",
-	LFUNC,		"FUNC",
-	LGE,		"GE",
-	LGO,		"GO",
-	LGOTO,		"GOTO",
-	LGT,		"GT",
-	LIF,		"IF",
-	LIMPORT,	"IMPORT",
-	LINC,		"INC",
-	LINTERFACE,	"INTERFACE",
-	LLE,		"LE",
-	LLITERAL,	"LITERAL",
-	LLSH,		"LSH",
-	LLT,		"LT",
-	LMAP,		"MAP",
-	LNAME,		"NAME",
-	LNE,		"NE",
-	LOROR,		"OROR",
-	LPACKAGE,	"PACKAGE",
-	LRANGE,		"RANGE",
-	LRETURN,	"RETURN",
-	LRSH,		"RSH",
-	LSELECT,	"SELECT",
-	LSTRUCT,	"STRUCT",
-	LSWITCH,	"SWITCH",
-	LTYPE,		"TYPE",
-	LVAR,		"VAR",
+	{LANDAND,	"ANDAND"},
+	{LANDNOT,	"ANDNOT"},
+	{LASOP,		"ASOP"},
+	{LBREAK,		"BREAK"},
+	{LCASE,		"CASE"},
+	{LCHAN,		"CHAN"},
+	{LCOLAS,		"COLAS"},
+	{LCOMM,		"<-"},
+	{LCONST,		"CONST"},
+	{LCONTINUE,	"CONTINUE"},
+	{LDDD,		"..."},
+	{LDEC,		"DEC"},
+	{LDEFAULT,	"DEFAULT"},
+	{LDEFER,		"DEFER"},
+	{LELSE,		"ELSE"},
+	{LEQ,		"EQ"},
+	{LFALL,		"FALL"},
+	{LFOR,		"FOR"},
+	{LFUNC,		"FUNC"},
+	{LGE,		"GE"},
+	{LGO,		"GO"},
+	{LGOTO,		"GOTO"},
+	{LGT,		"GT"},
+	{LIF,		"IF"},
+	{LIMPORT,	"IMPORT"},
+	{LINC,		"INC"},
+	{LINTERFACE,	"INTERFACE"},
+	{LLE,		"LE"},
+	{LLITERAL,	"LITERAL"},
+	{LLSH,		"LSH"},
+	{LLT,		"LT"},
+	{LMAP,		"MAP"},
+	{LNAME,		"NAME"},
+	{LNE,		"NE"},
+	{LOROR,		"OROR"},
+	{LPACKAGE,	"PACKAGE"},
+	{LRANGE,		"RANGE"},
+	{LRETURN,	"RETURN"},
+	{LRSH,		"RSH"},
+	{LSELECT,	"SELECT"},
+	{LSTRUCT,	"STRUCT"},
+	{LSWITCH,	"SWITCH"},
+	{LTYPE,		"TYPE"},
+	{LVAR,		"VAR"},
 };
 
 char*
@@ -2236,56 +2243,56 @@ struct
 	char *want;
 } yytfix[] =
 {
-	"$end",	"EOF",
-	"LLITERAL",	"literal",
-	"LASOP",	"op=",
-	"LBREAK",	"break",
-	"LCASE",	"case",
-	"LCHAN",	"chan",
-	"LCOLAS",	":=",
-	"LCONST",	"const",
-	"LCONTINUE",	"continue",
-	"LDDD",	"...",
-	"LDEFAULT",	"default",
-	"LDEFER",	"defer",
-	"LELSE",	"else",
-	"LFALL",	"fallthrough",
-	"LFOR",	"for",
-	"LFUNC",	"func",
-	"LGO",	"go",
-	"LGOTO",	"goto",
-	"LIF",	"if",
-	"LIMPORT",	"import",
-	"LINTERFACE",	"interface",
-	"LMAP",	"map",
-	"LNAME",	"name",
-	"LPACKAGE",	"package",
-	"LRANGE",	"range",
-	"LRETURN",	"return",
-	"LSELECT",	"select",
-	"LSTRUCT",	"struct",
-	"LSWITCH",	"switch",
-	"LTYPE",	"type",
-	"LVAR",	"var",
-	"LANDAND",	"&&",
-	"LANDNOT",	"&^",
-	"LBODY",	"{",
-	"LCOMM",	"<-",
-	"LDEC",	"--",
-	"LINC",	"++",
-	"LEQ",	"==",
-	"LGE",	">=",
-	"LGT",	">",
-	"LLE",	"<=",
-	"LLT",	"<",
-	"LLSH",	"<<",
-	"LRSH",	">>",
-	"LOROR",	"||",
-	"LNE",	"!=",
+	{"$end",	"EOF"},
+	{"LLITERAL",	"literal"},
+	{"LASOP",	"op="},
+	{"LBREAK",	"break"},
+	{"LCASE",	"case"},
+	{"LCHAN",	"chan"},
+	{"LCOLAS",	":="},
+	{"LCONST",	"const"},
+	{"LCONTINUE",	"continue"},
+	{"LDDD",	"..."},
+	{"LDEFAULT",	"default"},
+	{"LDEFER",	"defer"},
+	{"LELSE",	"else"},
+	{"LFALL",	"fallthrough"},
+	{"LFOR",	"for"},
+	{"LFUNC",	"func"},
+	{"LGO",	"go"},
+	{"LGOTO",	"goto"},
+	{"LIF",	"if"},
+	{"LIMPORT",	"import"},
+	{"LINTERFACE",	"interface"},
+	{"LMAP",	"map"},
+	{"LNAME",	"name"},
+	{"LPACKAGE",	"package"},
+	{"LRANGE",	"range"},
+	{"LRETURN",	"return"},
+	{"LSELECT",	"select"},
+	{"LSTRUCT",	"struct"},
+	{"LSWITCH",	"switch"},
+	{"LTYPE",	"type"},
+	{"LVAR",	"var"},
+	{"LANDAND",	"&&"},
+	{"LANDNOT",	"&^"},
+	{"LBODY",	"{"},
+	{"LCOMM",	"<-"},
+	{"LDEC",	"--"},
+	{"LINC",	"++"},
+	{"LEQ",	"=="},
+	{"LGE",	">="},
+	{"LGT",	">"},
+	{"LLE",	"<="},
+	{"LLT",	"<"},
+	{"LLSH",	"<<"},
+	{"LRSH",	">>"},
+	{"LOROR",	"||"},
+	{"LNE",	"!="},
 	
 	// spell out to avoid confusion with punctuation in error messages
-	"';'",	"semicolon or newline",
-	"','",	"comma",
+	{"';'",	"semicolon or newline"},
+	{"','",	"comma"},
 };
 
 static void

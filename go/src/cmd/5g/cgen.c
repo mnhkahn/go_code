@@ -236,25 +236,20 @@ cgen(Node *n, Node *res)
 		cgen(nl, &n1);
 		nodconst(&n2, nl->type, -1);
 		gins(a, &n2, &n1);
-		gmove(&n1, res);
-		regfree(&n1);
-		goto ret;
+		goto norm;
 
 	case OMINUS:
 		regalloc(&n1, nl->type, N);
 		cgen(nl, &n1);
 		nodconst(&n2, nl->type, 0);
 		gins(optoas(OMINUS, nl->type), &n2, &n1);
-		gmove(&n1, res);
-		regfree(&n1);
-		goto ret;
+		goto norm;
 
 	// symmetric binary
 	case OAND:
 	case OOR:
 	case OXOR:
 	case OADD:
-	case OADDPTR:
 	case OMUL:
 		a = optoas(n->op, nl->type);
 		goto sbop;
@@ -484,12 +479,15 @@ abop:	// asymmetric binary
 		cgen(nl, &n1);
 	}
 	gins(a, &n2, &n1);
+norm:
 	// Normalize result for types smaller than word.
 	if(n->type->width < widthptr) {
 		switch(n->op) {
 		case OADD:
 		case OSUB:
 		case OMUL:
+		case OCOM:
+		case OMINUS:
 			gins(optoas(OAS, n->type), &n1, &n1);
 			break;
 		}
@@ -1107,11 +1105,10 @@ bgen(Node *n, int true, int likely, Prog *to)
 {
 	int et, a;
 	Node *nl, *nr, *r;
-	Node n1, n2, n3, n4, tmp;
+	Node n1, n2, n3, tmp;
 	NodeList *ll;
 	Prog *p1, *p2;
 
-	USED(n4);			// in unreachable code below
 	if(debug['g']) {
 		dump("\nbgen", n);
 	}
@@ -1497,7 +1494,7 @@ sgen(Node *n, Node *res, int64 w)
 	if(osrc < odst && odst < osrc+w)
 		dir = -dir;
 
-	if(op == AMOVW && dir > 0 && c >= 4 && c <= 128) {
+	if(op == AMOVW && !nacl && dir > 0 && c >= 4 && c <= 128) {
 		r0.op = OREGISTER;
 		r0.val.u.reg = REGALLOC_R0;
 		r1.op = OREGISTER;
@@ -1524,7 +1521,7 @@ sgen(Node *n, Node *res, int64 w)
 		f = sysfunc("duffcopy");
 		p = gins(ADUFFCOPY, N, f);
 		afunclit(&p->to, f);
-		// 8 and 128 = magic constants: see ../../pkg/runtime/asm_arm.s
+		// 8 and 128 = magic constants: see ../../runtime/asm_arm.s
 		p->to.offset = 8*(128-c);
 
 		regfree(&tmp);
@@ -1636,7 +1633,10 @@ int
 componentgen(Node *nr, Node *nl)
 {
 	Node nodl, nodr, tmp;
+	Type *t;
 	int freel, freer;
+	vlong fldcount;
+	vlong loffset, roffset;
 
 	freel = 0;
 	freer = 0;
@@ -1646,8 +1646,33 @@ componentgen(Node *nr, Node *nl)
 		goto no;
 
 	case TARRAY:
-		if(!isslice(nl->type))
+		t = nl->type;
+
+		// Slices are ok.
+		if(isslice(t))
+			break;
+		// Small arrays are ok.
+		if(t->bound > 0 && t->bound <= 3 && !isfat(t->type))
+			break;
+
+		goto no;
+
+	case TSTRUCT:
+		// Small structs with non-fat types are ok.
+		// Zero-sized structs are treated separately elsewhere.
+		fldcount = 0;
+		for(t=nl->type->type; t; t=t->down) {
+			if(isfat(t->type))
+				goto no;
+			if(t->etype != TFIELD)
+				fatal("componentgen: not a TFIELD: %lT", t);
+			fldcount++;
+		}
+		if(fldcount == 0 || fldcount > 4)
 			goto no;
+
+		break;
+
 	case TSTRING:
 	case TINTER:
 		break;
@@ -1675,6 +1700,7 @@ componentgen(Node *nr, Node *nl)
 		freer = 1;
 	}
 
+	
 	// nl and nr are 'cadable' which basically means they are names (variables) now.
 	// If they are the same variable, don't generate any code, because the
 	// VARDEF we generate will mark the old value as dead incorrectly.
@@ -1684,8 +1710,25 @@ componentgen(Node *nr, Node *nl)
 
 	switch(nl->type->etype) {
 	case TARRAY:
+		// componentgen for arrays.
 		if(nl->op == ONAME)
 			gvardef(nl);
+		t = nl->type;
+		if(!isslice(t)) {
+			nodl.type = t->type;
+			nodr.type = nodl.type;
+			for(fldcount=0; fldcount < t->bound; fldcount++) {
+				if(nr == N)
+					clearslim(&nodl);
+				else
+					gmove(&nodr, &nodl);
+				nodl.xoffset += t->type->width;
+				nodr.xoffset += t->type->width;
+			}
+			goto yes;
+		}
+
+		// componentgen for slices.
 		nodl.xoffset += Array_array;
 		nodl.type = ptrto(nl->type->type);
 
@@ -1759,6 +1802,31 @@ componentgen(Node *nr, Node *nl)
 		}
 		gmove(&nodr, &nodl);
 
+		goto yes;
+
+	case TSTRUCT:
+		if(nl->op == ONAME)
+			gvardef(nl);
+		loffset = nodl.xoffset;
+		roffset = nodr.xoffset;
+		// funarg structs may not begin at offset zero.
+		if(nl->type->etype == TSTRUCT && nl->type->funarg && nl->type->type)
+			loffset -= nl->type->type->width;
+		if(nr != N && nr->type->etype == TSTRUCT && nr->type->funarg && nr->type->type)
+			roffset -= nr->type->type->width;
+
+		for(t=nl->type->type; t; t=t->down) {
+			nodl.xoffset = loffset + t->width;
+			nodl.type = t->type;
+
+			if(nr == N)
+				clearslim(&nodl);
+			else {
+				nodr.xoffset = roffset + t->width;
+				nodr.type = nodl.type;
+				gmove(&nodr, &nodl);
+			}
+		}
 		goto yes;
 	}
 

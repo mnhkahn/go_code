@@ -6,6 +6,7 @@
 #include	<libc.h>
 #include	"go.h"
 #define	TUP(x,y)	(((x)<<16)|(y))
+/*c2go int TUP(int, int); */
 
 static	Val	tocplx(Val);
 static	Val	toflt(Val);
@@ -1565,7 +1566,6 @@ isgoconst(Node *n)
 	case ORSH:
 	case OSUB:
 	case OXOR:
-	case OCONV:
 	case OIOTA:
 	case OCOMPLEX:
 	case OREAL:
@@ -1573,7 +1573,12 @@ isgoconst(Node *n)
 		if(isgoconst(n->left) && (n->right == N || isgoconst(n->right)))
 			return 1;
 		break;
-	
+
+	case OCONV:
+		if(okforconst[n->type->etype] && isgoconst(n->left))
+			return 1;
+		break;
+
 	case OLEN:
 	case OCAP:
 		l = n->left;

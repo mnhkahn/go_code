@@ -52,7 +52,7 @@ timeout_scale=1
 [ "$GOARCH" == "arm" ] && timeout_scale=3
 
 echo '# Testing packages.'
-time go test std -short -timeout=$(expr 120 \* $timeout_scale)s
+time go test std -short -timeout=$(expr 120 \* $timeout_scale)s -gcflags "$GO_GCFLAGS"
 echo
 
 # We set GOMAXPROCS=2 in addition to -cpu=1,2,4 in order to test runtime bootstrap code,
@@ -63,17 +63,6 @@ echo
 
 echo '# sync -cpu=10'
 go test sync -short -timeout=$(expr 120 \* $timeout_scale)s -cpu=10
-
-# Race detector only supported on Linux and OS X,
-# and only on amd64, and only when cgo is enabled.
-case "$GOHOSTOS-$GOOS-$GOARCH-$CGO_ENABLED" in
-linux-linux-amd64-1 | darwin-darwin-amd64-1)
-	echo
-	echo '# Testing race detector.'
-	go test -race -i runtime/race flag
-	go test -race -run=Output runtime/race
-	go test -race -short flag
-esac
 
 xcd() {
 	echo
@@ -99,6 +88,13 @@ xcd() {
 # Strictly speaking, the test may be unnecessary on the final command of
 # the subshell, but it aids later editing and may avoid future bash bugs.
 
+if [ "$GOOS" == "android" ]; then
+	# Disable cgo tests on android.
+	# They are not designed to run off the host.
+	# golang.org/issue/8345
+	CGO_ENABLED=0
+fi
+
 [ "$CGO_ENABLED" != 1 ] ||
 [ "$GOHOSTOS" == windows ] ||
 (xcd ../misc/cgo/stdio
@@ -113,6 +109,7 @@ go run $GOROOT/test/run.go - . || exit 1
 [ "$CGO_ENABLED" != 1 ] ||
 (xcd ../misc/cgo/test
 # cgo tests inspect the traceback for runtime functions
+extlink=0
 export GOTRACEBACK=2
 go test -ldflags '-linkmode=auto' || exit 1
 # linkmode=internal fails on dragonfly since errno is a TLS relocation.
@@ -121,19 +118,24 @@ case "$GOHOSTOS-$GOARCH" in
 openbsd-386 | openbsd-amd64)
 	# test linkmode=external, but __thread not supported, so skip testtls.
 	go test -ldflags '-linkmode=external' || exit 1
+	extlink=1
 	;;
 darwin-386 | darwin-amd64)
 	# linkmode=external fails on OS X 10.6 and earlier == Darwin
 	# 10.8 and earlier.
 	case $(uname -r) in
 	[0-9].* | 10.*) ;;
-	*) go test -ldflags '-linkmode=external'  || exit 1;;
+	*)
+		go test -ldflags '-linkmode=external'  || exit 1
+		extlink=1
+		;;
 	esac
 	;;
-dragonfly-386 | dragonfly-amd64 | freebsd-386 | freebsd-amd64 | freebsd-arm | linux-386 | linux-amd64 | linux-arm | netbsd-386 | netbsd-amd64)
+android-arm | dragonfly-386 | dragonfly-amd64 | freebsd-386 | freebsd-amd64 | freebsd-arm | linux-386 | linux-amd64 | linux-arm | netbsd-386 | netbsd-amd64)
 	go test -ldflags '-linkmode=external' || exit 1
 	go test -ldflags '-linkmode=auto' ../testtls || exit 1
 	go test -ldflags '-linkmode=external' ../testtls || exit 1
+	extlink=1
 	
 	case "$GOHOSTOS-$GOARCH" in
 	netbsd-386 | netbsd-amd64) ;; # no static linking
@@ -157,11 +159,36 @@ dragonfly-386 | dragonfly-amd64 | freebsd-386 | freebsd-amd64 | freebsd-arm | li
 esac
 ) || exit $?
 
-# This tests cgo -godefs. That mode is not supported,
+# Race detector only supported on Linux, FreeBSD and OS X,
+# and only on amd64, and only when cgo is enabled.
+# Delayed until here so we know whether to try external linking.
+case "$GOHOSTOS-$GOOS-$GOARCH-$CGO_ENABLED" in
+linux-linux-amd64-1 | freebsd-freebsd-amd64-1 | darwin-darwin-amd64-1)
+	echo
+	echo '# Testing race detector.'
+	go test -race -i runtime/race flag os/exec
+	go test -race -run=Output runtime/race
+	go test -race -short flag os/exec
+	
+	# Test with external linking; see issue 9133.
+	if [ "$extlink" = 1 ]; then
+		go test -race -short -ldflags=-linkmode=external flag os/exec
+	fi
+esac
+
+# This tests cgo -cdefs. That mode is not supported,
 # so it's okay if it doesn't work on some systems.
 # In particular, it works badly with clang on OS X.
+# It doesn't work at all now that we disallow C code
+# outside runtime. Once runtime has no C code it won't
+# even be necessary.
+# [ "$CGO_ENABLED" != 1 ] || [ "$GOOS" == darwin ] ||
+# (xcd ../misc/cgo/testcdefs
+# ./test.bash || exit 1
+# ) || exit $?
+
 [ "$CGO_ENABLED" != 1 ] || [ "$GOOS" == darwin ] ||
-(xcd ../misc/cgo/testcdefs
+(xcd ../misc/cgo/testgodefs
 ./test.bash || exit 1
 ) || exit $?
 
@@ -184,16 +211,19 @@ go run main.go || exit 1
 ) || exit $?
 
 [ "$GOOS" == nacl ] ||
+[ "$GOOS" == android ] ||
 (xcd ../doc/progs
 time ./run || exit 1
 ) || exit $?
 
+[ "$GOOS" == android ] ||
 [ "$GOOS" == nacl ] ||
 [ "$GOARCH" == arm ] ||  # uses network, fails under QEMU
 (xcd ../doc/articles/wiki
 ./test.bash || exit 1
 ) || exit $?
 
+[ "$GOOS" == android ] ||
 [ "$GOOS" == nacl ] ||
 (xcd ../doc/codewalk
 time ./run || exit 1
@@ -205,6 +235,7 @@ time ./run || exit 1
 time ./timing.sh -test || exit 1
 ) || exit $?
 
+[ "$GOOS" == android ] || # TODO(crawshaw): get this working
 [ "$GOOS" == openbsd ] || # golang.org/issue/5057
 (
 echo
@@ -212,6 +243,7 @@ echo '#' ../test/bench/go1
 go test ../test/bench/go1 || exit 1
 ) || exit $?
 
+[ "$GOOS" == android ] ||
 (xcd ../test
 unset GOMAXPROCS
 GOOS=$GOHOSTOS GOARCH=$GOHOSTARCH go build -o runtest run.go || exit 1
@@ -219,6 +251,7 @@ time ./runtest || exit 1
 rm -f runtest
 ) || exit $?
 
+[ "$GOOS" == android ] ||
 [ "$GOOS" == nacl ] ||
 (
 echo

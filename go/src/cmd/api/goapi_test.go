@@ -38,7 +38,7 @@ func TestGolden(t *testing.T) {
 			continue
 		}
 
-		goldenFile := filepath.Join("testdata", "src", "pkg", fi.Name(), "golden.txt")
+		goldenFile := filepath.Join("testdata", "src", fi.Name(), "golden.txt")
 		w := NewWalker(nil, "testdata/src/pkg")
 		w.export(w.Import(fi.Name()))
 
@@ -142,6 +142,26 @@ func TestCompareAPI(t *testing.T) {
 	}
 }
 
+func TestSkipInternal(t *testing.T) {
+	tests := []struct {
+		pkg  string
+		want bool
+	}{
+		{"net/http", true},
+		{"net/http/internal-foo", true},
+		{"net/http/internal", false},
+		{"net/http/internal/bar", false},
+		{"internal/foo", false},
+		{"internal", false},
+	}
+	for _, tt := range tests {
+		got := !internalPkg.MatchString(tt.pkg)
+		if got != tt.want {
+			t.Errorf("%s is internal = %v; want %v", tt.pkg, got, tt.want)
+		}
+	}
+}
+
 func BenchmarkAll(b *testing.B) {
 	stds, err := exec.Command("go", "list", "std").Output()
 	if err != nil {
@@ -156,7 +176,7 @@ func BenchmarkAll(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		for _, context := range contexts {
-			w := NewWalker(context, filepath.Join(build.Default.GOROOT, "src/pkg"))
+			w := NewWalker(context, filepath.Join(build.Default.GOROOT, "src"))
 			for _, name := range pkgNames {
 				if name != "unsafe" && !strings.HasPrefix(name, "cmd/") {
 					w.export(w.Import(name))

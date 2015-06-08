@@ -13,8 +13,23 @@
 set -e
 ulimit -c 0
 
+# guess GOARCH if not set
+naclGOARCH=$GOARCH
+if [ -z "$naclGOARCH" ]; then
+	case "$(uname -m)" in
+	x86_64)
+		naclGOARCH=amd64p32
+		;;
+	armv7l) # NativeClient on ARM only supports ARMv7A.
+		naclGOARCH=arm
+		;;
+	i?86)
+		naclGOARCH=386
+		;;
+	esac
+fi
+
 # Check GOARCH.
-naclGOARCH=${GOARCH:-386}
 case "$naclGOARCH" in
 amd64p32)
 	if ! which sel_ldr_x86_64 >/dev/null; then
@@ -25,6 +40,12 @@ amd64p32)
 386)
 	if ! which sel_ldr_x86_32 >/dev/null; then
 		echo 'cannot find sel_ldr_x86_32' 1>&2
+		exit 1
+	fi
+	;;
+arm)
+	if ! which sel_ldr_arm >/dev/null; then
+		echo 'cannot find sel_ldr_arm' 1>&2
 		exit 1
 	fi
 	;;
@@ -45,12 +66,14 @@ if [ ! -f make.bash ]; then
 	exit 1
 fi
 GOOS=$GOHOSTOS GOARCH=$GOHOSTARCH ./make.bash
-unset GOROOT
+
+# the builder might have set GOROOT_FINAL.
+export GOROOT=$(pwd)/..
 
 # Build zip file embedded in package syscall.
 gobin=${GOBIN:-$(pwd)/../bin}
-rm -f pkg/syscall/fstest_nacl.go
-GOOS=$GOHOSTOS GOARCH=$GOHOSTARCH $gobin/go run ../misc/nacl/mkzip.go -p syscall -r .. ../misc/nacl/testzip.proto pkg/syscall/fstest_nacl.go
+rm -f syscall/fstest_nacl.go
+GOOS=$GOHOSTOS GOARCH=$GOHOSTARCH $gobin/go run ../misc/nacl/mkzip.go -p syscall -r .. ../misc/nacl/testzip.proto syscall/fstest_nacl.go
 
 # Run standard build and tests.
 export PATH=$(pwd)/../misc/nacl:$PATH

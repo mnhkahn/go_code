@@ -649,7 +649,7 @@ typefmt(Fmt *fp, Type *t)
 
 		if(t->funarg) {
 			fmtstrcpy(fp, "(");
-			if(fmtmode == FTypeId || fmtmode == FErr) {	// no argument names on function signature, and no "noescape" tags
+			if(fmtmode == FTypeId || fmtmode == FErr) {	// no argument names on function signature, and no "noescape"/"nosplit" tags
 				for(t1=t->type; t1!=T; t1=t1->down)
 					if(t1->down)
 						fmtprint(fp, "%hT, ", t1);
@@ -810,6 +810,13 @@ stmtfmt(Fmt *f, Node *n)
 		break;
 
 	case OASOP:
+		if(n->implicit) {
+			if(n->etype == OADD)
+				fmtprint(f, "%N++", n->left);
+			else
+				fmtprint(f, "%N--", n->left);
+			break;
+		}
 		fmtprint(f, "%N %#O= %N", n->left, n->etype, n->right);
 		break;
 
@@ -880,7 +887,11 @@ stmtfmt(Fmt *f, Node *n)
 			fmtstrcpy(f, "for loop");
 			break;
 		}
-
+		
+		if(n->list == nil) {
+			fmtprint(f, "for range %N { %H }", n->right, n->nbody);
+			break;
+		}
 		fmtprint(f, "for %,H = range %N { %H }", n->list, n->right, n->nbody);
 		break;
 
@@ -974,7 +985,6 @@ static int opprec[] = {
 	[OTFUNC] = 8,
 	[OTINTER] = 8,
 	[OTMAP] = 8,
-	[OTPAREN] = 8,
 	[OTSTRUCT] = 8,
 
 	[OINDEXMAP] = 8,
@@ -1105,16 +1115,11 @@ exprfmt(Fmt *f, Node *n, int prec)
 
 	case ONAME:
 		// Special case: name used as local variable in export.
-		switch(n->class&~PHEAP){
-		case PAUTO:
-		case PPARAM:
-		case PPARAMOUT:
-			// _ becomes ~b%d internally; print as _ for export
-			if(fmtmode == FExp && n->sym && n->sym->name[0] == '~' && n->sym->name[1] == 'b')
-				return fmtprint(f, "_");
-			if(fmtmode == FExp && n->sym && !isblank(n) && n->vargen > 0)
-				return fmtprint(f, "%S·%d", n->sym, n->vargen);
-		}
+		// _ becomes ~b%d internally; print as _ for export
+		if(fmtmode == FExp && n->sym && n->sym->name[0] == '~' && n->sym->name[1] == 'b')
+			return fmtprint(f, "_");
+		if(fmtmode == FExp && n->sym && !isblank(n) && n->vargen > 0)
+			return fmtprint(f, "%S·%d", n->sym, n->vargen);
 
 		// Special case: explicit name of func (*T) method(...) is turned into pkg.(*T).method,
 		// but for export, this should be rendered as (*pkg.T).meth.
@@ -1140,9 +1145,6 @@ exprfmt(Fmt *f, Node *n, int prec)
 			return fmtprint(f, "[]%N", n->left);
 		return fmtprint(f, "[]%N", n->right);  // happens before typecheck
 
-	case OTPAREN:
-		return fmtprint(f, "(%N)", n->left);
-
 	case OTMAP:
 		return fmtprint(f, "map[%N]%N", n->left, n->right);
 
@@ -1153,7 +1155,7 @@ exprfmt(Fmt *f, Node *n, int prec)
 		case Csend:
 			return fmtprint(f, "chan<- %N", n->left);
 		default:
-			if(n->left != N && n->left->op == TCHAN && n->left->sym == S && n->left->etype == Crecv)
+			if(n->left != N && n->left->op == OTCHAN && n->left->sym == S && n->left->etype == Crecv)
 				return fmtprint(f, "chan (%N)", n->left);
 			else
 				return fmtprint(f, "chan %N", n->left);

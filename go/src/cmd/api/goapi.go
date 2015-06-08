@@ -107,6 +107,8 @@ func setContexts() {
 	}
 }
 
+var internalPkg = regexp.MustCompile(`(^|/)internal($|/)`)
+
 func main() {
 	flag.Parse()
 
@@ -132,12 +134,16 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		pkgNames = strings.Fields(string(stds))
+		for _, pkg := range strings.Fields(string(stds)) {
+			if !internalPkg.MatchString(pkg) {
+				pkgNames = append(pkgNames, pkg)
+			}
+		}
 	}
 
 	var featureCtx = make(map[string]map[string]bool) // feature -> context name -> true
 	for _, context := range contexts {
-		w := NewWalker(context, filepath.Join(build.Default.GOROOT, "src/pkg"))
+		w := NewWalker(context, filepath.Join(build.Default.GOROOT, "src"))
 
 		for _, name := range pkgNames {
 			// - Package "unsafe" contains special signatures requiring
@@ -277,7 +283,7 @@ func compareAPI(w io.Writer, features, required, optional, exception []string) (
 				delete(optionalSet, newFeature)
 			} else {
 				fmt.Fprintf(w, "+%s\n", newFeature)
-				if !*allowNew {
+				if !*allowNew || !strings.Contains(runtime.Version(), "devel") {
 					ok = false // we're in lock-down mode for next release
 				}
 			}
@@ -307,11 +313,15 @@ func fileFeatures(filename string) []string {
 	if err != nil {
 		log.Fatalf("Error reading file %s: %v", filename, err)
 	}
-	text := strings.TrimSpace(string(bs))
-	if text == "" {
-		return nil
+	lines := strings.Split(string(bs), "\n")
+	var nonblank []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			nonblank = append(nonblank, line)
+		}
 	}
-	return strings.Split(text, "\n")
+	return nonblank
 }
 
 var fset = token.NewFileSet()
@@ -370,6 +380,106 @@ func (w *Walker) parseFile(dir, file string) (*ast.File, error) {
 			log.Fatalf("incorrect generated file: %s", err)
 		}
 	}
+	if w.context != nil && file == fmt.Sprintf("zruntime_defs_%s_%s.go", w.context.GOOS, w.context.GOARCH) {
+		// Just enough to keep the api checker happy. Keep sorted.
+		src := "package runtime; type (" +
+			" _defer struct{};" +
+			" _func struct{};" +
+			" _panic struct{};" +
+			" _select struct{}; " +
+			" _type struct{};" +
+			" alg struct{};" +
+			" chantype struct{};" +
+			" context struct{};" + // windows
+			" eface struct{};" +
+			" epollevent struct{};" +
+			" funcval struct{};" +
+			" g struct{};" +
+			" gobuf struct{};" +
+			" hchan struct{};" +
+			" iface struct{};" +
+			" interfacetype struct{};" +
+			" itab struct{};" +
+			" keventt struct{};" +
+			" m struct{};" +
+			" maptype struct{};" +
+			" mcache struct{};" +
+			" mspan struct{};" +
+			" mutex struct{};" +
+			" note struct{};" +
+			" p struct{};" +
+			" parfor struct{};" +
+			" slicetype struct{};" +
+			" stkframe struct{};" +
+			" sudog struct{};" +
+			" timespec struct{};" +
+			" waitq struct{};" +
+			" wincallbackcontext struct{};" +
+			"); " +
+			"const (" +
+			" cb_max = 2000;" +
+			" _CacheLineSize = 64;" +
+			" _Gidle = 1;" +
+			" _Grunnable = 2;" +
+			" _Grunning = 3;" +
+			" _Gsyscall = 4;" +
+			" _Gwaiting = 5;" +
+			" _Gdead = 6;" +
+			" _Genqueue = 7;" +
+			" _Gcopystack = 8;" +
+			" _NSIG = 32;" +
+			" _FlagNoScan = iota;" +
+			" _FlagNoZero;" +
+			" _TinySize;" +
+			" _TinySizeClass;" +
+			" _MaxSmallSize;" +
+			" _PageShift;" +
+			" _PageSize;" +
+			" _PageMask;" +
+			" _BitsPerPointer;" +
+			" _BitsMask;" +
+			" _PointersPerByte;" +
+			" _MaxGCMask;" +
+			" _BitsDead;" +
+			" _BitsPointer;" +
+			" _MSpanInUse;" +
+			" _ConcurrentSweep;" +
+			" _KindBool;" +
+			" _KindInt;" +
+			" _KindInt8;" +
+			" _KindInt16;" +
+			" _KindInt32;" +
+			" _KindInt64;" +
+			" _KindUint;" +
+			" _KindUint8;" +
+			" _KindUint16;" +
+			" _KindUint32;" +
+			" _KindUint64;" +
+			" _KindUintptr;" +
+			" _KindFloat32;" +
+			" _KindFloat64;" +
+			" _KindComplex64;" +
+			" _KindComplex128;" +
+			" _KindArray;" +
+			" _KindChan;" +
+			" _KindFunc;" +
+			" _KindInterface;" +
+			" _KindMap;" +
+			" _KindPtr;" +
+			" _KindSlice;" +
+			" _KindString;" +
+			" _KindStruct;" +
+			" _KindUnsafePointer;" +
+			" _KindDirectIface;" +
+			" _KindGCProg;" +
+			" _KindNoPointers;" +
+			" _KindMask;" +
+			")"
+		f, err = parser.ParseFile(fset, filename, src, 0)
+		if err != nil {
+			log.Fatalf("incorrect generated file: %s", err)
+		}
+	}
 
 	if f == nil {
 		f, err = parser.ParseFile(fset, filename, nil, 0)
@@ -390,6 +500,11 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// The package cache doesn't operate correctly in rare (so far artificial)
+// circumstances (issue 8425). Disable before debugging non-obvious errors
+// from the type-checker.
+const usePkgCache = true
 
 var (
 	pkgCache = map[string]*types.Package{} // map tagKey to package
@@ -452,11 +567,13 @@ func (w *Walker) Import(name string) (pkg *types.Package) {
 	// If we've already done an import with the same set
 	// of relevant tags, reuse the result.
 	var key string
-	if tags, ok := pkgTags[dir]; ok {
-		key = tagKey(dir, context, tags)
-		if pkg := pkgCache[key]; pkg != nil {
-			w.imported[name] = pkg
-			return pkg
+	if usePkgCache {
+		if tags, ok := pkgTags[dir]; ok {
+			key = tagKey(dir, context, tags)
+			if pkg := pkgCache[key]; pkg != nil {
+				w.imported[name] = pkg
+				return pkg
+			}
 		}
 	}
 
@@ -469,9 +586,11 @@ func (w *Walker) Import(name string) (pkg *types.Package) {
 	}
 
 	// Save tags list first time we see a directory.
-	if _, ok := pkgTags[dir]; !ok {
-		pkgTags[dir] = info.AllTags
-		key = tagKey(dir, context, info.AllTags)
+	if usePkgCache {
+		if _, ok := pkgTags[dir]; !ok {
+			pkgTags[dir] = info.AllTags
+			key = tagKey(dir, context, info.AllTags)
+		}
 	}
 
 	filenames := append(append([]string{}, info.GoFiles...), info.CgoFiles...)
@@ -485,6 +604,11 @@ func (w *Walker) Import(name string) (pkg *types.Package) {
 		}
 
 		n = fmt.Sprintf("zgoarch_%s.go", w.context.GOARCH)
+		if !contains(filenames, n) {
+			filenames = append(filenames, n)
+		}
+
+		n = fmt.Sprintf("zruntime_defs_%s_%s.go", w.context.GOOS, w.context.GOARCH)
 		if !contains(filenames, n) {
 			filenames = append(filenames, n)
 		}
@@ -519,7 +643,9 @@ func (w *Walker) Import(name string) (pkg *types.Package) {
 		log.Fatalf("error typechecking package %s: %s (%s)", name, err, ctxt)
 	}
 
-	pkgCache[key] = pkg
+	if usePkgCache {
+		pkgCache[key] = pkg
+	}
 
 	w.imported[name] = pkg
 	return

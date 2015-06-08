@@ -539,7 +539,10 @@ ldelf(Biobuf *f, char *pkg, int64 len, char *pn)
 			s->type = SRODATA;
 			break;
 		case ElfSectFlagAlloc + ElfSectFlagWrite:
-			s->type = SDATA;
+			if(sect->type == ElfSectNobits)
+				s->type = SNOPTRBSS;
+			else
+				s->type = SNOPTRDATA;
 			break;
 		case ElfSectFlagAlloc + ElfSectFlagExec:
 			s->type = STEXT;
@@ -572,7 +575,7 @@ ldelf(Biobuf *f, char *pkg, int64 len, char *pn)
 			if(s->size < sym.size)
 				s->size = sym.size;
 			if(s->type == 0 || s->type == SXREF)
-				s->type = SBSS;
+				s->type = SNOPTRBSS;
 			continue;
 		}
 		if(sym.shndx >= obj->nsect || sym.shndx == 0)
@@ -582,6 +585,8 @@ ldelf(Biobuf *f, char *pkg, int64 len, char *pn)
 			continue;
 		sect = obj->sect+sym.shndx;
 		if(sect->sym == nil) {
+			if(strncmp(sym.name, ".Linfo_string", 13) == 0) // clang does this
+				continue;
 			diag("%s: sym#%d: ignoring %s in section %d (type %d)", pn, i, sym.name, sym.shndx, sym.type);
 			continue;
 		}
@@ -817,7 +822,7 @@ readsym(ElfObj *obj, int i, ElfSym *sym, int needSym)
 			}
 			break;
 		case ElfSymBindLocal:
-			if(!(thechar == '5' && (strcmp(sym->name, "$a") == 0 || strcmp(sym->name, "$d") == 0))) // binutils for arm generate these mapping symbols, ignore these
+			if(!(thechar == '5' && (strncmp(sym->name, "$a", 2) == 0 || strncmp(sym->name, "$d", 2) == 0))) // binutils for arm generate these mapping symbols, ignore these
 				if(needSym) {
 					// local names and hidden visiblity global names are unique
 					// and should only reference by its index, not name, so we

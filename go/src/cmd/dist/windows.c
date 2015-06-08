@@ -770,10 +770,10 @@ bool
 hassuffix(char *p, char *suffix)
 {
 	int np, ns;
-	
+
 	np = strlen(p);
 	ns = strlen(suffix);
-	return np >= ns && strcmp(p+np-ns, suffix) == 0;
+	return np >= ns && streq(p+np-ns, suffix);
 }
 
 bool
@@ -929,7 +929,7 @@ xsamefile(char *f1, char *f2)
 		return 1;
 	
 	torune(&ru, f1);
-	// refer to ../../pkg/os/stat_windows.go:/sameFile
+	// refer to ../../os/stat_windows.go:/sameFile
 	fd1 = CreateFileW(ru, 0, 0, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
 	xfree(ru);
 	if(fd1 == INVALID_HANDLE_VALUE)

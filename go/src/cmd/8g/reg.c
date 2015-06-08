@@ -35,6 +35,11 @@
 
 #define	NREGVAR	16	/* 8 integer + 8 floating */
 #define	REGBITS	((uint32)0xffff)
+/*c2go enum {
+	NREGVAR = 16,
+	REGBITS = (1<<NREGVAR) - 1,
+};
+*/
 
 static	Reg*	firstr;
 static	int	first	= 1;
@@ -1163,6 +1168,7 @@ void
 addreg(Adr *a, int rn)
 {
 	a->sym = nil;
+	a->node = nil;
 	a->offset = 0;
 	a->type = rn;
 

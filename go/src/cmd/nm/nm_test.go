@@ -55,8 +55,9 @@ func checkSymbols(t *testing.T, nmoutput []byte) {
 }
 
 func TestNM(t *testing.T) {
-	if runtime.GOOS == "nacl" {
-		t.Skip("skipping on nacl")
+	switch runtime.GOOS {
+	case "android", "nacl":
+		t.Skipf("skipping on %s", runtime.GOOS)
 	}
 
 	tmpDir, err := ioutil.TempDir("", "TestNM")
@@ -76,17 +77,17 @@ func TestNM(t *testing.T) {
 		"elf/testdata/gcc-amd64-linux-exec",
 		"macho/testdata/gcc-386-darwin-exec",
 		"macho/testdata/gcc-amd64-darwin-exec",
-		"pe/testdata/gcc-amd64-mingw-exec",
+		// "pe/testdata/gcc-amd64-mingw-exec", // no symbols!
 		"pe/testdata/gcc-386-mingw-exec",
 		"plan9obj/testdata/amd64-plan9-exec",
 		"plan9obj/testdata/386-plan9-exec",
 	}
 	for _, f := range testfiles {
-		exepath := filepath.Join(runtime.GOROOT(), "src", "pkg", "debug", f)
+		exepath := filepath.Join(runtime.GOROOT(), "src", "debug", f)
 		cmd := exec.Command(testnmpath, exepath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("go tool nm %v: %v\n%s", exepath, err, string(out))
+			t.Errorf("go tool nm %v: %v\n%s", exepath, err, string(out))
 		}
 	}
 

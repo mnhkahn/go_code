@@ -4,7 +4,7 @@
 
 #include	"l.h"
 #include	"lib.h"
-#include	"../../pkg/runtime/funcdata.h"
+#include	"../../runtime/funcdata.h"
 
 static void
 addvarint(Pcdata *d, uint32 val)
@@ -90,7 +90,7 @@ renumberfiles(Link *ctxt, LSym **files, int nfiles, Pcdata *d)
 		}
 		dv = val - newval;
 		newval = val;
-		v = (uint32)(dv<<1) ^ (uint32)(int32)(dv>>31);
+		v = ((uint32)dv<<1) ^ (uint32)(int32)(dv>>31);
 		addvarint(&out, v);
 
 		// pc delta
@@ -119,7 +119,7 @@ pclntab(void)
 	static Pcln zpcln;
 	
 	funcdata_bytes = 0;
-	ftab = linklookup(ctxt, "pclntab", 0);
+	ftab = linklookup(ctxt, "runtime.pclntab", 0);
 	ftab->type = SPCLNTAB;
 	ftab->reachable = 1;
 

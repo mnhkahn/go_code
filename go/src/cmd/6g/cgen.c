@@ -247,7 +247,6 @@ cgen(Node *n, Node *res)
 	case OOR:
 	case OXOR:
 	case OADD:
-	case OADDPTR:
 	case OMUL:
 		a = optoas(n->op, nl->type);
 		if(a == AIMULB) {
@@ -752,12 +751,7 @@ agenr(Node *n, Node *a, Node *res)
 			regalloc(&n3, types[tptr], res);
 			p1 = gins(ALEAQ, N, &n3);
 			datastring(nl->val.u.sval->s, nl->val.u.sval->len, &p1->from);
-			if(flag_largemodel) {
-				gins(AADDQ, &n2, &n3);
-			} else {
-				p1->from.scale = 1;
-				p1->from.index = n2.val.u.reg;
-			}
+			gins(AADDQ, &n2, &n3);
 			goto indexdone;
 		}
 
@@ -1457,7 +1451,7 @@ sgen(Node *n, Node *ns, int64 w)
 			p = gins(ADUFFCOPY, N, N);
 			p->to.type = D_ADDR;
 			p->to.sym = linksym(pkglookup("duffcopy", runtimepkg));
-			// 14 and 128 = magic constants: see ../../pkg/runtime/asm_amd64.s
+			// 14 and 128 = magic constants: see ../../runtime/asm_amd64.s
 			p->to.offset = 14*(128-q);
 		} else
 		while(q > 0) {

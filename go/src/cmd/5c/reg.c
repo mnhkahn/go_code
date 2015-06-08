@@ -204,6 +204,16 @@ regopt(Prog *p)
 			break;
 		}
 
+		/* the mod/div runtime routines smash R12 */
+		switch(p->as) {
+		case AMOD:
+		case AMODU:
+		case ADIV:
+		case ADIVU:
+			regbits |= RtoB(12);
+			break;
+		}
+
 		if(p->as == AMOVM) {
 			if(p->from.type == D_CONST)
 				z = p->from.offset;
@@ -396,7 +406,7 @@ loop2:
 			rgp->cost = change;
 			nregion++;
 			if(nregion >= NRGN) {
-				warn(Z, "too many regions");
+				fatal(Z, "too many regions");
 				goto brk;
 			}
 			rgp++;
@@ -632,11 +642,8 @@ mkvar(Addr *a, int docon)
 	if(s)
 		if(s->name[0] == '.')
 			goto none;
-	if(nvar >= NVAR) {
-		if(debug['w'] > 1 && s)
-			warn(Z, "variable not optimized: %s", s->name);
-		goto none;
-	}
+	if(nvar >= NVAR)
+		fatal(Z, "variable not optimized: %s", s->name);
 	i = nvar;
 	nvar++;
 	v = &var[i];

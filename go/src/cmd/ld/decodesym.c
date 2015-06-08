@@ -4,10 +4,10 @@
 
 #include	"l.h"
 #include	"lib.h"
-#include	"../../pkg/runtime/typekind.h"
+#include	"../../runtime/typekind.h"
 
 // Decoding the type.* symbols.	 This has to be in sync with
-// ../../pkg/runtime/type.go, or more specificaly, with what
+// ../../runtime/type.go, or more specificaly, with what
 // ../gc/reflect.c stuffs in these.
 
 static Reloc*
@@ -70,14 +70,28 @@ decode_inuxi(uchar* p, int sz)
 static int
 commonsize(void)
 {
-	return 7*PtrSize + 8;
+	return 8*PtrSize + 8;
 }
 
 // Type.commonType.kind
 uint8
 decodetype_kind(LSym *s)
 {
-	return s->p[1*PtrSize + 7] & ~KindNoPointers;	//  0x13 / 0x1f
+	return s->p[1*PtrSize + 7] & KindMask;	//  0x13 / 0x1f
+}
+
+// Type.commonType.kind
+uint8
+decodetype_noptr(LSym *s)
+{
+	return s->p[1*PtrSize + 7] & KindNoPointers;	//  0x13 / 0x1f
+}
+
+// Type.commonType.kind
+uint8
+decodetype_usegcprog(LSym *s)
+{
+	return s->p[1*PtrSize + 7] & KindGCProg;	//  0x13 / 0x1f
 }
 
 // Type.commonType.size
@@ -89,9 +103,18 @@ decodetype_size(LSym *s)
 
 // Type.commonType.gc
 LSym*
-decodetype_gc(LSym *s)
+decodetype_gcprog(LSym *s)
 {
-	return decode_reloc_sym(s, 1*PtrSize + 8 + 1*PtrSize);
+	return decode_reloc_sym(s, 1*PtrSize + 8 + 2*PtrSize);
+}
+
+uint8*
+decodetype_gcmask(LSym *s)
+{
+	LSym *mask;
+	
+	mask = decode_reloc_sym(s, 1*PtrSize + 8 + 1*PtrSize);
+	return mask->p;
 }
 
 // Type.ArrayType.elem and Type.SliceType.Elem
@@ -104,7 +127,7 @@ decodetype_arrayelem(LSym *s)
 vlong
 decodetype_arraylen(LSym *s)
 {
-	return decode_inuxi(s->p + commonsize()+PtrSize, PtrSize);
+	return decode_inuxi(s->p + commonsize()+2*PtrSize, PtrSize);
 }
 
 // Type.PtrType.elem
@@ -120,6 +143,7 @@ decodetype_mapkey(LSym *s)
 {
 	return decode_reloc_sym(s, commonsize());	// 0x1c / 0x30
 }
+
 LSym*
 decodetype_mapvalue(LSym *s)
 {

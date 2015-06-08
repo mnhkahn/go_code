@@ -83,21 +83,21 @@ func issue7978go() {
 
 func test7978(t *testing.T) {
 	if os.Getenv("GOTRACEBACK") != "2" {
-		t.Fatal("GOTRACEBACK must be 2")
+		t.Fatalf("GOTRACEBACK must be 2")
 	}
 	issue7978sync = 0
 	go issue7978go()
 	// test in c code, before callback
 	issue7978wait(0, 1)
-	issue7978check(t, "runtime.cgocall(", "", 1)
+	issue7978check(t, "runtime.cgocall_errno(", "", 1)
 	// test in go code, during callback
 	issue7978wait(2, 3)
-	issue7978check(t, "test.issue7978cb(", "test.issue7978go", 4)
+	issue7978check(t, "test.issue7978cb(", "test.issue7978go", 3)
 	// test in c code, after callback
 	issue7978wait(4, 5)
-	issue7978check(t, "runtime.cgocall(", "runtime.cgocallback", 1)
+	issue7978check(t, "runtime.cgocall_errno(", "runtime.cgocallback", 1)
 	// test in go code, after return from cgo
 	issue7978wait(6, 7)
-	issue7978check(t, "test.issue7978go(", "", 4)
+	issue7978check(t, "test.issue7978go(", "", 3)
 	atomic.StoreUint32(&issue7978sync, 8)
 }

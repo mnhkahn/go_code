@@ -31,6 +31,7 @@
 #include	<u.h>
 #include	"cc.h"
 #include	"y.tab.h"
+#include	"../ld/textflag.h"
 
 #ifndef	CPP
 #define	CPP	"cpp"
@@ -203,6 +204,7 @@ main(int argc, char *argv[])
 	
 	flagparse(&argc, &argv, usage);
 	ctxt->debugasm = debug['S'];
+	ctxt->debugvlog = debug['v'];
 
 	if(argc < 1 && outfile == 0)
 		usage();
@@ -1316,6 +1318,7 @@ cinit(void)
 	t->width = 0;
 	symstring = slookup(".string");
 	symstring->class = CSTATIC;
+	symstring->dataflag = NOPTR;
 	symstring->type = t;
 
 	t = typ(TARRAY, types[TCHAR]);

@@ -45,6 +45,8 @@ char*	paramspace	= "FP";
 void
 main(int argc, char *argv[])
 {
+	int i;
+
 	linkarchinit();
 	ctxt = linknew(thelinkarch);
 	ctxt->thechar = thechar;
@@ -63,7 +65,13 @@ main(int argc, char *argv[])
 	INITRND = -1;
 	INITENTRY = 0;
 	linkmode = LinkAuto;
-	nuxiinit();
+	
+	// For testing behavior of go command when tools crash.
+	// Undocumented, not in standard flag parser to avoid
+	// exposing in usage message.
+	for(i=1; i<argc; i++)
+		if(strcmp(argv[i], "-crash_for_testing") == 0)
+			*(volatile int*)0 = 0;
 	
 	if(thechar == '5' && ctxt->goarm == 5)
 		debug['F'] = 1;
@@ -72,6 +80,7 @@ main(int argc, char *argv[])
 	if(thechar == '6')
 		flagcount("8", "assume 64-bit addresses", &debug['8']);
 	flagfn1("B", "info: define ELF NT_GNU_BUILD_ID note", addbuildinfo);
+	flagcount("C", "check Go calls to C code", &debug['C']);
 	flagint64("D", "addr: data address", &INITDAT);
 	flagstr("E", "sym: entry symbol", &INITENTRY);
 	if(thechar == '5')
@@ -96,11 +105,11 @@ main(int argc, char *argv[])
 	flagcount("a", "disassemble output", &debug['a']);
 	flagcount("c", "dump call graph", &debug['c']);
 	flagcount("d", "disable dynamic executable", &debug['d']);
-	flagstr("extld", "linker to run in external mode", &extld);
-	flagstr("extldflags", "flags for external linker", &extldflags);
+	flagstr("extld", "ld: linker to run in external mode", &extld);
+	flagstr("extldflags", "ldflags: flags for external linker", &extldflags);
 	flagcount("f", "ignore version mismatch", &debug['f']);
 	flagcount("g", "disable go package data checks", &debug['g']);
-	flagstr("installsuffix", "pkg directory suffix", &flag_installsuffix);
+	flagstr("installsuffix", "suffix: pkg directory suffix", &flag_installsuffix);
 	flagstr("k", "sym: set field tracking symbol", &tracksym);
 	flagfn1("linkmode", "mode: set link mode (internal, external, auto)", setlinkmode);
 	flagcount("n", "dump symbol table", &debug['n']);
@@ -110,7 +119,7 @@ main(int argc, char *argv[])
 	flagcount("s", "disable symbol table", &debug['s']);
 	if(thechar == '5' || thechar == '6')
 		flagcount("shared", "generate shared object (implies -linkmode external)", &flag_shared);
-	flagstr("tmpdir", "leave temporary files in this directory", &tmpdir);
+	flagstr("tmpdir", "dir: leave temporary files in this directory", &tmpdir);
 	flagcount("u", "reject unsafe packages", &debug['u']);
 	flagcount("v", "print link trace", &debug['v']);
 	flagcount("w", "disable DWARF generation", &debug['w']);
@@ -139,7 +148,7 @@ main(int argc, char *argv[])
 	if(HEADTYPE == -1)
 		HEADTYPE = headtype(goos);
 	ctxt->headtype = HEADTYPE;
-	if (headstring == nil)
+	if(headstring == nil)
 		headstring = headstr(HEADTYPE);
 
 	archinit();
@@ -163,6 +172,7 @@ main(int argc, char *argv[])
 		mark(linklookup(ctxt, "runtime.read_tls_fallback", 0));
 	}
 
+	checkgo();
 	deadcode();
 	callgraph();
 	paramspace = "SP";	/* (FP) now (SP) on output */

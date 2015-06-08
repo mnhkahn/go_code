@@ -17,9 +17,9 @@
 #include <libc.h>
 #include "gg.h"
 #include "opt.h"
-#include "../../pkg/runtime/funcdata.h"
-
-enum { BitsPerPointer = 2 };
+#include "../ld/textflag.h"
+#include "../../runtime/funcdata.h"
+#include "../../runtime/mgc0.h"
 
 enum {
 	UNVISITED = 0,
@@ -674,8 +674,8 @@ static void
 progeffects(Prog *prog, Array *vars, Bvec *uevar, Bvec *varkill, Bvec *avarinit)
 {
 	ProgInfo info;
-	Adr *from;
-	Adr *to;
+	Addr *from;
+	Addr *to;
 	Node *node;
 	int32 i;
 	int32 pos;
@@ -1063,7 +1063,7 @@ checkptxt(Node *fn, Prog *firstp)
 // and then simply copied into bv at the correct offset on future calls with
 // the same type t. On https://rsc.googlecode.com/hg/testdata/slow.go, twobitwalktype1
 // accounts for 40% of the 6g execution time.
-static void
+void
 twobitwalktype1(Type *t, vlong *xoffset, Bvec *bv)
 {
 	vlong fieldoffset;
@@ -1113,8 +1113,7 @@ twobitwalktype1(Type *t, vlong *xoffset, Bvec *bv)
 		// struct { byte *str; intgo len; }
 		if((*xoffset & (widthptr-1)) != 0)
 			fatal("twobitwalktype1: invalid alignment, %T", t);
-		bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 0);
-		bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 1); // 3:0 = multiword:string
+		bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 1); // 2 = live ptr in first slot
 		*xoffset += t->width;
 		break;
 
@@ -1145,9 +1144,7 @@ twobitwalktype1(Type *t, vlong *xoffset, Bvec *bv)
 			// struct { byte *array; uintgo len; uintgo cap; }
 			if((*xoffset & (widthptr-1)) != 0)
 				fatal("twobitwalktype1: invalid TARRAY alignment, %T", t);
-			bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 0);
-			bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 1);
-			bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 2); // 3:1 = multiword/slice
+			bvset(bv, (*xoffset / widthptr) * BitsPerPointer + 1); // 2 = live ptr in first slot
 			*xoffset += t->width;
 		} else
 			for(i = 0; i < t->bound; i++)
@@ -1683,6 +1680,13 @@ livenessepilogue(Liveness *lv)
 // FNV-1 hash function constants.
 #define H0 2166136261UL
 #define Hp 16777619UL
+/*c2go
+enum
+{
+	H0 = 2166136261,
+	Hp = 16777619,
+};
+*/
 
 static uint32
 hashbitmap(uint32 h, Bvec *bv)
@@ -1932,11 +1936,15 @@ twobitwritesymbol(Array *arr, Sym *sym)
 			break;
 		for(j = 0; j < bv->n; j += 32) {
 			word = bv->b[j/32];
-			off = duint32(sym, off, word);
+			// Runtime reads the bitmaps as byte arrays. Oblige.
+			off = duint8(sym, off, word);
+			off = duint8(sym, off, word>>8);
+			off = duint8(sym, off, word>>16);
+			off = duint8(sym, off, word>>24);
 		}
 	}
 	duint32(sym, 0, i); // number of bitmaps
-	ggloblsym(sym, off, 0, 1);
+	ggloblsym(sym, off, RODATA);
 }
 
 static void

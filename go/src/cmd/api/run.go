@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -53,7 +54,7 @@ func main() {
 	}
 
 	out, err = exec.Command("go", "tool", "api",
-		"-c", file("go1", "go1.1", "go1.2", "go1.3"),
+		"-c", file("go1", "go1.1", "go1.2", "go1.3", "go1.4"),
 		"-next", file("next"),
 		"-except", file("except")).CombinedOutput()
 	if err != nil {
@@ -98,16 +99,14 @@ func prepGoPath() string {
 	if err == nil {
 		username = u.Username
 	} else {
-		// Only need to handle Unix here, as Windows's os/user uses
-		// native syscall and should work fine without cgo.
 		username = os.Getenv("USER")
 		if username == "" {
-			log.Fatalf("Error getting current user: %v", err)
+			username = "nobody"
 		}
 	}
 
 	// The GOPATH we'll return
-	gopath := filepath.Join(os.TempDir(), "gopath-api-"+cleanUsername(username), goToolsVersion)
+	gopath := filepath.Join(os.TempDir(), "gopath-api-"+cleanUsername(username)+"-"+cleanUsername(strings.Fields(runtime.Version())[0]), goToolsVersion)
 
 	// cloneDir is where we run "hg clone".
 	cloneDir := filepath.Join(gopath, "src", "code.google.com", "p")

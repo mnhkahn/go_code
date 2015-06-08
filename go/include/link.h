@@ -105,13 +105,15 @@ struct	Prog
 	int32	spadj;
 	uchar	mark;
 	uchar	back;	// 6l, 8l
-	char	ft;	/* 6l, 8l oclass cache */
-	char	tt;	// 6l, 8l
-	uchar	optab;	// 5l
+	uchar	ft;	/* 6l, 8l oclass cache */
+	uchar	tt;	// 6l, 8l
+	uint16	optab;	// 5l
 	uchar	isize;	// 6l, 8l
 
 	char	width;	/* fake for DATA */
 	char	mode;	/* 16, 32, or 64 in 6l, 8l; internal use in 5g, 6g, 8g */
+	
+	/*c2go uchar TEXTFLAG; */
 };
 
 // prevent incompatible type signatures between liblink and 8l on Plan 9
@@ -124,6 +126,7 @@ struct	LSym
 	short	type;
 	short	version;
 	uchar	dupok;
+	uchar	cfunc;
 	uchar	external;
 	uchar	nosplit;
 	uchar	reachable;
@@ -167,7 +170,7 @@ struct	LSym
 
 	// SDATA, SBSS
 	uchar*	p;
-	int32	np;
+	int	np;
 	int32	maxp;
 	Reloc*	r;
 	int32	nr;
@@ -201,10 +204,10 @@ enum
 	SELFSECT,
 	SMACHO,	/* Mach-O __nl_symbol_ptr */
 	SMACHOGOT,
+	SWINDOWS,
 	SNOPTRDATA,
 	SINITARR,
 	SDATA,
-	SWINDOWS,
 	SBSS,
 	SNOPTRBSS,
 	STLSBSS,
@@ -370,6 +373,7 @@ struct	Link
 	char*	trimpath;
 	char*	goroot;
 	char*	goroot_final;
+	int32	enforce_data_order;	// for use by assembler
 
 	// hash table of all symbols
 	LSym*	hash[LINKHASH];
@@ -389,9 +393,9 @@ struct	Link
 	LSym*	sym_divu;
 	LSym*	sym_mod;
 	LSym*	sym_modu;
-	LSym*	symmorestack[20];
-	LSym*	gmsym;
-	LSym*	plan9tos;
+	LSym*	symmorestack[2];
+	LSym*	tlsg;
+	LSym*	plan9privates;
 	Prog*	curp;
 	Prog*	printp;
 	Prog*	blitrl;
@@ -403,7 +407,7 @@ struct	Link
 	int	asmode;
 	uchar*	andptr;
 	uchar	and[100];
-	int32	instoffset;
+	int64	instoffset;
 	int32	autosize;
 	int32	armsize;
 
@@ -429,11 +433,17 @@ struct	Link
 	LSym*	filesyms;
 };
 
+enum {
+	LittleEndian = 0x04030201,
+	BigEndian = 0x01020304,
+};
+
 // LinkArch is the definition of a single architecture.
 struct LinkArch
 {
 	char*	name; // "arm", "amd64", and so on
 	int	thechar;	// '5', '6', and so on
+	int32	endian; // LittleEndian or BigEndian
 
 	void	(*addstacksplit)(Link*, LSym*);
 	void	(*assemble)(Link*, LSym*);
@@ -462,6 +472,7 @@ struct LinkArch
 	int	D_PARAM;
 	int	D_SCONST;
 	int	D_STATIC;
+	int	D_OREG;
 
 	int	ACALL;
 	int	ADATA;
@@ -532,6 +543,7 @@ vlong	adduint8(Link *ctxt, LSym *s, uint8 v);
 vlong	adduintxx(Link *ctxt, LSym *s, uint64 v, int wid);
 void	mangle(char *file);
 void	savedata(Link *ctxt, LSym *s, Prog *p, char *pn);
+void	savedata1(Link *ctxt, LSym *s, Prog *p, char *pn, int enforce_order);
 vlong	setaddr(Link *ctxt, LSym *s, vlong off, LSym *t);
 vlong	setaddrplus(Link *ctxt, LSym *s, vlong off, LSym *t, vlong add);
 vlong	setuint16(Link *ctxt, LSym *s, vlong r, uint16 v);
@@ -558,7 +570,7 @@ int	find1(int32 l, int c);
 void	linkgetline(Link *ctxt, int32 line, LSym **f, int32 *l);
 void	histtoauto(Link *ctxt);
 void	mkfwd(LSym*);
-void	nuxiinit(void);
+void	nuxiinit(LinkArch*);
 void	savehist(Link *ctxt, int32 line, int32 off);
 Prog*	copyp(Link*, Prog*);
 Prog*	appendp(Link*, Prog*);
@@ -600,6 +612,8 @@ extern	char*	anames5[];
 extern	char*	anames6[];
 extern	char*	anames8[];
 
+extern	char*	cnames5[];
+
 extern	LinkArch	link386;
 extern	LinkArch	linkamd64;
 extern	LinkArch	linkamd64p32;
@@ -610,6 +624,7 @@ extern	LinkArch	linkarm;
 #pragma	varargck	type	"lD"	Addr*
 #pragma	varargck	type	"P"	Prog*
 #pragma	varargck	type	"R"	int
+#pragma varargck	type	"^"	int
 
 // TODO(ality): remove this workaround.
 //   It's here because Pconv in liblink/list?.c references %L.

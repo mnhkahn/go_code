@@ -33,6 +33,10 @@
 // A section further describes the pieces of that block for
 // use in debuggers and such.
 
+enum {
+	MAXIO		= 8192,
+};
+
 typedef struct Segment Segment;
 typedef struct Section Section;
 
@@ -179,12 +183,13 @@ uint16	be16(uchar *b);
 uint32	be32(uchar *b);
 uint64	be64(uchar *b);
 void	callgraph(void);
+void	checkgo(void);
 void	cflush(void);
-void	codeblk(int32 addr, int32 size);
+void	codeblk(int64 addr, int64 size);
 vlong	cpos(void);
 void	cseek(vlong p);
 void	cwrite(void *buf, int n);
-void	datblk(int32 addr, int32 size);
+void	datblk(int64 addr, int64 size);
 int	datcmp(LSym *s1, LSym *s2);
 vlong	datoff(vlong addr);
 void	deadcode(void);
@@ -196,9 +201,12 @@ int	decodetype_funcincount(LSym *s);
 LSym*	decodetype_funcintype(LSym *s, int i);
 int	decodetype_funcoutcount(LSym *s);
 LSym*	decodetype_funcouttype(LSym *s, int i);
-LSym*	decodetype_gc(LSym *s);
+LSym*	decodetype_gcprog(LSym *s);
+uint8*	decodetype_gcmask(LSym *s);
 vlong	decodetype_ifacemethodcount(LSym *s);
 uint8	decodetype_kind(LSym *s);
+uint8	decodetype_noptr(LSym *s);
+uint8	decodetype_usegcprog(LSym *s);
 LSym*	decodetype_mapkey(LSym *s);
 LSym*	decodetype_mapvalue(LSym *s);
 LSym*	decodetype_ptrelem(LSym *s);

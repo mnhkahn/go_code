@@ -45,7 +45,7 @@ var (
 
 	// letter is the build.ArchChar
 	letter string
-	
+
 	goos, goarch string
 
 	// dirs are the directories to look for *.go files in.
@@ -71,8 +71,9 @@ const maxTests = 5000
 func main() {
 	flag.Parse()
 
-	goos = os.Getenv("GOOS")
-	goarch = os.Getenv("GOARCH")
+	goos = getenv("GOOS", runtime.GOOS)
+	goarch = getenv("GOARCH", runtime.GOARCH)
+
 	findExecCmd()
 
 	// Disable parallelism if printing or if using a simulator.
@@ -121,7 +122,7 @@ func main() {
 	failed := false
 	resCount := map[string]int{}
 	for _, test := range tests {
-		<-test.donec		
+		<-test.donec
 		status := "ok  "
 		errStr := ""
 		if _, isSkip := test.err.(skipError); isSkip {
@@ -225,8 +226,8 @@ func check(err error) {
 type test struct {
 	dir, gofile string
 	donec       chan bool // closed when done
-	dt time.Duration
-	
+	dt          time.Duration
+
 	src    string
 	action string // "compile", "build", etc.
 
@@ -625,6 +626,7 @@ func (t *test) run() {
 		out, err := runcmd(append([]string{"go", "run", t.goFileName()}, args...)...)
 		if err != nil {
 			t.err = err
+			return
 		}
 		if strings.Replace(string(out), "\r\n", "\n", -1) != t.expectedOutput() {
 			t.err = fmt.Errorf("incorrect output\n%s", out)
@@ -639,6 +641,7 @@ func (t *test) run() {
 		out, err := runcmd(append([]string{"go", "run", t.goFileName()}, args...)...)
 		if err != nil {
 			t.err = err
+			return
 		}
 		tfile := filepath.Join(t.tempDir, "tmp__.go")
 		if err := ioutil.WriteFile(tfile, out, 0666); err != nil {
@@ -648,6 +651,7 @@ func (t *test) run() {
 		out, err = runcmd("go", "run", tfile)
 		if err != nil {
 			t.err = err
+			return
 		}
 		if string(out) != t.expectedOutput() {
 			t.err = fmt.Errorf("incorrect output\n%s", out)
@@ -658,6 +662,7 @@ func (t *test) run() {
 		out, err := runcmd(append([]string{"go", "run", t.goFileName()}, args...)...)
 		if err != nil {
 			t.err = err
+			return
 		}
 		tfile := filepath.Join(t.tempDir, "tmp__.go")
 		err = ioutil.WriteFile(tfile, out, 0666)
@@ -700,7 +705,7 @@ func findExecCmd() []string {
 		execCmd = []string{path}
 	}
 	return execCmd
-}	
+}
 
 func (t *test) String() string {
 	return filepath.Join(t.dir, t.gofile)
@@ -834,11 +839,11 @@ func partitionStrings(prefix string, strs []string) (matched, unmatched []string
 }
 
 type wantedError struct {
-	reStr    string
-	re       *regexp.Regexp
-	lineNum  int
-	file     string
-	prefix string
+	reStr   string
+	re      *regexp.Regexp
+	lineNum int
+	file    string
+	prefix  string
 }
 
 var (
@@ -889,11 +894,11 @@ func (t *test) wantedErrors(file, short string) (errs []wantedError) {
 			}
 			prefix := fmt.Sprintf("%s:%d", short, lineNum)
 			errs = append(errs, wantedError{
-				reStr:    rx,
-				re:       re,
-				prefix: prefix,
-				lineNum:  lineNum,
-				file:     short,
+				reStr:   rx,
+				re:      re,
+				prefix:  prefix,
+				lineNum: lineNum,
+				file:    short,
 			})
 		}
 	}
@@ -902,8 +907,6 @@ func (t *test) wantedErrors(file, short string) (errs []wantedError) {
 }
 
 var skipOkay = map[string]bool{
-	"linkx.go":            true, // like "run" but wants linker flags
-	"sinit.go":            true,
 	"fixedbugs/bug248.go": true, // combines errorcheckdir and rundir in the same dir.
 	"fixedbugs/bug302.go": true, // tests both .$O and .a imports.
 	"fixedbugs/bug345.go": true, // needs the appropriate flags in gc invocation.
@@ -971,4 +974,12 @@ func envForDir(dir string) []string {
 	}
 	env = append(env, "PWD="+dir)
 	return env
+}
+
+func getenv(key, def string) string {
+	value := os.Getenv(key)
+	if value != "" {
+		return value
+	}
+	return def
 }

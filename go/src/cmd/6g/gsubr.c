@@ -31,11 +31,11 @@
 #include <u.h>
 #include <libc.h>
 #include "gg.h"
-#include "../../pkg/runtime/funcdata.h"
+#include "../../runtime/funcdata.h"
 
 // TODO(rsc): Can make this bigger if we move
 // the text segment up higher in 6l for all GOOS.
-// At the same time, can raise StackBig in ../../pkg/runtime/stack.h.
+// At the same time, can raise StackBig in ../../runtime/stack.h.
 vlong unmappedzero = 4096;
 
 void
@@ -215,17 +215,7 @@ gtrack(Sym *s)
 }
 
 void
-gargsize(vlong size)
-{
-	Node n1, n2;
-	
-	nodconst(&n1, types[TINT32], PCDATA_ArgSize);
-	nodconst(&n2, types[TINT32], size);
-	gins(APCDATA, &n1, &n2);
-}
-
-void
-ggloblsym(Sym *s, int32 width, int dupok, int rodata)
+ggloblsym(Sym *s, int32 width, int8 flags)
 {
 	Prog *p;
 
@@ -236,10 +226,7 @@ ggloblsym(Sym *s, int32 width, int dupok, int rodata)
 	p->to.type = D_CONST;
 	p->to.index = D_NONE;
 	p->to.offset = width;
-	if(dupok)
-		p->from.scale |= DUPOK;
-	if(rodata)
-		p->from.scale |= RODATA;
+	p->from.scale = flags;
 }
 
 int
@@ -584,6 +571,7 @@ ginscon(int as, vlong c, Node *n2)
 }
 
 #define	CASE(a,b)	(((a)<<16)|((b)<<0))
+/*c2go int CASE(int, int); */
 
 /*
  * Is this node a memory operand?
@@ -600,11 +588,8 @@ ismem(Node *n)
 	case ONAME:
 	case OPARAM:
 	case OCLOSUREVAR:
-		return 1;
 	case OADDR:
-		if(flag_largemodel)
-			return 1;
-		break;
+		return 1;
 	}
 	return 0;
 }
@@ -1542,14 +1527,12 @@ optoas(int op, Type *t)
 	case CASE(OADD, TINT32):
 	case CASE(OADD, TUINT32):
 	case CASE(OADD, TPTR32):
-	case CASE(OADDPTR, TPTR32):
 		a = AADDL;
 		break;
 
 	case CASE(OADD, TINT64):
 	case CASE(OADD, TUINT64):
 	case CASE(OADD, TPTR64):
-	case CASE(OADDPTR, TPTR64):
 		a = AADDQ;
 		break;
 

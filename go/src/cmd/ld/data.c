@@ -35,7 +35,7 @@
 #include	"../ld/elf.h"
 #include	"../ld/macho.h"
 #include	"../ld/pe.h"
-#include	"../../pkg/runtime/mgc0.h"
+#include	"../../runtime/mgc0.h"
 
 void	dynreloc(void);
 
@@ -145,7 +145,7 @@ relocsym(LSym *s)
 			diag("%s: invalid relocation %d+%d not in [%d,%d)", s->name, off, siz, 0, s->np);
 			continue;
 		}
-		if(r->sym != S && (r->sym->type & SMASK == 0 || r->sym->type & SMASK == SXREF)) {
+		if(r->sym != S && ((r->sym->type & (SMASK | SHIDDEN)) == 0 || (r->sym->type & SMASK) == SXREF)) {
 			diag("%s: not defined", r->sym->name);
 			continue;
 		}
@@ -159,6 +159,10 @@ relocsym(LSym *s)
 			diag("unhandled relocation for %s (type %d rtype %d)", r->sym->name, r->sym->type, r->type);
 		if(r->sym != S && r->sym->type != STLSBSS && !r->sym->reachable)
 			diag("unreachable sym in relocation: %s %s", s->name, r->sym->name);
+
+		// Android emulates runtime.tlsg as a regular variable.
+		if (r->type == R_TLS && strcmp(goos, "android") == 0)
+			r->type = R_ADDR;
 
 		switch(r->type) {
 		default:
@@ -186,8 +190,8 @@ relocsym(LSym *s)
 		case R_TLS_LE:
 			if(linkmode == LinkExternal && iself && HEADTYPE != Hopenbsd) {
 				r->done = 0;
-				r->sym = ctxt->gmsym;
-				r->xsym = ctxt->gmsym;
+				r->sym = ctxt->tlsg;
+				r->xsym = ctxt->tlsg;
 				r->xadd = r->add;
 				o = 0;
 				if(thechar != '6')
@@ -200,8 +204,8 @@ relocsym(LSym *s)
 		case R_TLS_IE:
 			if(linkmode == LinkExternal && iself && HEADTYPE != Hopenbsd) {
 				r->done = 0;
-				r->sym = ctxt->gmsym;
-				r->xsym = ctxt->gmsym;
+				r->sym = ctxt->tlsg;
+				r->xsym = ctxt->tlsg;
 				r->xadd = r->add;
 				o = 0;
 				if(thechar != '6')
@@ -277,9 +281,13 @@ relocsym(LSym *s)
 					if(thechar == '6')
 						o = 0;
 				} else if(HEADTYPE == Hdarwin) {
-					if(rs->type != SHOSTOBJ)
-						o += symaddr(rs) - rs->sect->vaddr;
-					o -= r->off; // WTF?
+					if(r->type == R_CALL) {
+						if(rs->type != SHOSTOBJ)
+							o += symaddr(rs) - rs->sect->vaddr;
+						o -= r->off; // relative to section offset, not symbol
+					} else {
+						o += r->siz;
+					}
 				} else {
 					diag("unhandled pcrel relocation for %s", headstring);
 				}
@@ -421,10 +429,10 @@ dynreloc(void)
 }
 
 static void
-blk(LSym *start, int32 addr, int32 size)
+blk(LSym *start, int64 addr, int64 size)
 {
 	LSym *sym;
-	int32 eaddr;
+	int64 eaddr;
 	uchar *p, *ep;
 
 	for(sym = start; sym != nil; sym = sym->next)
@@ -463,10 +471,10 @@ blk(LSym *start, int32 addr, int32 size)
 }
 
 void
-codeblk(int32 addr, int32 size)
+codeblk(int64 addr, int64 size)
 {
 	LSym *sym;
-	int32 eaddr, n;
+	int64 eaddr, n;
 	uchar *q;
 
 	if(debug['a'])
@@ -523,10 +531,10 @@ codeblk(int32 addr, int32 size)
 }
 
 void
-datblk(int32 addr, int32 size)
+datblk(int64 addr, int64 size)
 {
 	LSym *sym;
-	int32 i, eaddr;
+	int64 i, eaddr;
 	uchar *p, *ep;
 	char *typ, *rsname;
 	Reloc *r;
@@ -612,22 +620,26 @@ addstrdata(char *name, char *value)
 {
 	LSym *s, *sp;
 	char *p;
+	uchar reachable;
 
 	p = smprint("%s.str", name);
 	sp = linklookup(ctxt, p, 0);
 	free(p);
 	addstring(sp, value);
+	sp->type = SRODATA;
 
 	s = linklookup(ctxt, name, 0);
 	s->size = 0;
 	s->dupok = 1;
+	reachable = s->reachable;
 	addaddr(ctxt, s, sp);
-	adduint32(ctxt, s, strlen(value));
-	if(PtrSize == 8)
-		adduint32(ctxt, s, 0);  // round struct to pointer width
+	adduintxx(ctxt, s, strlen(value), PtrSize);
 
-	// in case reachability has already been computed
-	sp->reachable = s->reachable;
+	// addstring, addaddr, etc., mark the symbols as reachable.
+	// In this case that is not necessarily true, so stick to what
+	// we know before entering this function.
+	s->reachable = reachable;
+	sp->reachable = reachable;
 }
 
 vlong
@@ -702,31 +714,176 @@ maxalign(LSym *s, int type)
 	return max;
 }
 
-static void
-gcaddsym(LSym *gc, LSym *s, vlong off)
+// Helper object for building GC type programs.
+typedef struct ProgGen ProgGen;
+struct ProgGen
 {
-	vlong a;
-	LSym *gotype;
+	LSym*	s;
+	int32	datasize;
+	uint8	data[256/PointersPerByte];
+	vlong	pos;
+};
 
-	if(s->size < PtrSize)
+static void
+proggeninit(ProgGen *g, LSym *s)
+{
+	g->s = s;
+	g->datasize = 0;
+	g->pos = 0;
+	memset(g->data, 0, sizeof(g->data));
+}
+
+static void
+proggenemit(ProgGen *g, uint8 v)
+{
+	adduint8(ctxt, g->s, v);
+}
+
+// Writes insData block from g->data.
+static void
+proggendataflush(ProgGen *g)
+{
+	int32 i, s;
+
+	if(g->datasize == 0)
 		return;
-	if(strcmp(s->name, ".string") == 0)
+	proggenemit(g, insData);
+	proggenemit(g, g->datasize);
+	s = (g->datasize + PointersPerByte - 1)/PointersPerByte;
+	for(i = 0; i < s; i++)
+		proggenemit(g, g->data[i]);
+	g->datasize = 0;
+	memset(g->data, 0, sizeof(g->data));
+}
+
+static void
+proggendata(ProgGen *g, uint8 d)
+{
+	g->data[g->datasize/PointersPerByte] |= d << ((g->datasize%PointersPerByte)*BitsPerPointer);
+	g->datasize++;
+	if(g->datasize == 255)
+		proggendataflush(g);
+}
+
+// Skip v bytes due to alignment, etc.
+static void
+proggenskip(ProgGen *g, vlong off, vlong v)
+{
+	vlong i;
+
+	for(i = off; i < off+v; i++) {
+		if((i%PtrSize) == 0)
+			proggendata(g, BitsScalar);
+	}
+}
+
+// Emit insArray instruction.
+static void
+proggenarray(ProgGen *g, vlong len)
+{
+	int32 i;
+
+	proggendataflush(g);
+	proggenemit(g, insArray);
+	for(i = 0; i < PtrSize; i++, len >>= 8)
+		proggenemit(g, len);
+}
+
+static void
+proggenarrayend(ProgGen *g)
+{
+	proggendataflush(g);
+	proggenemit(g, insArrayEnd);
+}
+
+static void
+proggenfini(ProgGen *g, vlong size)
+{
+	proggenskip(g, g->pos, size - g->pos);
+	proggendataflush(g);
+	proggenemit(g, insEnd);
+}
+
+
+// This function generates GC pointer info for global variables.
+static void
+proggenaddsym(ProgGen *g, LSym *s)
+{
+	LSym *gcprog;
+	uint8 *mask;
+	vlong i, size;
+
+	if(s->size == 0)
 		return;
 
-	gotype = s->gotype;
-	if(gotype != nil) {
-		//print("gcaddsym:    %s    %d    %s\n", s->name, s->size, gotype->name);
-		adduintxx(ctxt, gc, GC_CALL, PtrSize);
-		adduintxx(ctxt, gc, off, PtrSize);
-		addpcrelplus(ctxt, gc, decodetype_gc(gotype), 3*PtrSize+4);
-		if(PtrSize == 8)
-			adduintxx(ctxt, gc, 0, 4);
-	} else {
-		//print("gcaddsym:    %s    %d    <unknown type>\n", s->name, s->size);
-		for(a = -off&(PtrSize-1); a+PtrSize<=s->size; a+=PtrSize) {
-			adduintxx(ctxt, gc, GC_APTR, PtrSize);
-			adduintxx(ctxt, gc, off+a, PtrSize);
+	// Skip alignment hole from the previous symbol.
+	proggenskip(g, g->pos, s->value - g->pos);
+	g->pos += s->value - g->pos;
+
+	// The test for names beginning with . here is meant
+	// to keep .dynamic and .dynsym from turning up as
+	// conservative symbols. They should be marked SELFSECT
+	// and not SDATA, but sometimes that doesn't happen.
+	// Leave debugging the SDATA issue for the Go rewrite.
+
+	if(s->gotype == nil && s->size >= PtrSize && s->name[0] != '.') {
+		// conservative scan
+		diag("missing Go type information for global symbol: %s size %d", s->name, (int)s->size);
+		if((s->size%PtrSize) || (g->pos%PtrSize))
+			diag("proggenaddsym: unaligned conservative symbol %s: size=%lld pos=%lld",
+				s->name, s->size, g->pos);
+		size = (s->size+PtrSize-1)/PtrSize*PtrSize;
+		if(size < 32*PtrSize) {
+			// Emit small symbols as data.
+			for(i = 0; i < size/PtrSize; i++)
+				proggendata(g, BitsPointer);
+		} else {
+			// Emit large symbols as array.
+			proggenarray(g, size/PtrSize);
+			proggendata(g, BitsPointer);
+			proggenarrayend(g);
 		}
+		g->pos = s->value + size;
+	} else if(s->gotype == nil || decodetype_noptr(s->gotype) || s->size < PtrSize || s->name[0] == '.') {
+		// no scan
+		if(s->size < 32*PtrSize) {
+			// Emit small symbols as data.
+			// This case also handles unaligned and tiny symbols, so tread carefully.
+			for(i = s->value; i < s->value+s->size; i++) {
+				if((i%PtrSize) == 0)
+					proggendata(g, BitsScalar);
+			}
+		} else {
+			// Emit large symbols as array.
+			if((s->size%PtrSize) || (g->pos%PtrSize))
+				diag("proggenaddsym: unaligned noscan symbol %s: size=%lld pos=%lld",
+					s->name, s->size, g->pos);
+			proggenarray(g, s->size/PtrSize);
+			proggendata(g, BitsScalar);
+			proggenarrayend(g);
+		}
+		g->pos = s->value + s->size;
+	} else if(decodetype_usegcprog(s->gotype)) {
+		// gc program, copy directly
+		proggendataflush(g);
+		gcprog = decodetype_gcprog(s->gotype);
+		size = decodetype_size(s->gotype);
+		if((size%PtrSize) || (g->pos%PtrSize))
+			diag("proggenaddsym: unaligned gcprog symbol %s: size=%lld pos=%lld",
+				s->name, s->size, g->pos);
+		for(i = 0; i < gcprog->np-1; i++)
+			proggenemit(g, gcprog->p[i]);
+		g->pos = s->value + size;
+	} else {
+		// gc mask, it's small so emit as data
+		mask = decodetype_gcmask(s->gotype);
+		size = decodetype_size(s->gotype);
+		if((size%PtrSize) || (g->pos%PtrSize))
+			diag("proggenaddsym: unaligned gcmask symbol %s: size=%lld pos=%lld",
+				s->name, s->size, g->pos);
+		for(i = 0; i < size; i += PtrSize)
+			proggendata(g, (mask[i/PtrSize/2]>>((i/PtrSize%2)*4+2))&BitsMask);
+		g->pos = s->value + size;
 	}
 }
 
@@ -751,18 +908,12 @@ dodata(void)
 	Section *sect;
 	Segment *segro;
 	LSym *s, *last, **l;
-	LSym *gcdata1, *gcbss1;
+	LSym *gcdata, *gcbss;
+	ProgGen gen;
 
 	if(debug['v'])
 		Bprint(&bso, "%5.2f dodata\n", cputime());
 	Bflush(&bso);
-
-	gcdata1 = linklookup(ctxt, "gcdata", 0);
-	gcbss1 = linklookup(ctxt, "gcbss", 0);
-
-	// size of .data and .bss section. the zero value is later replaced by the actual size of the section.
-	adduintxx(ctxt, gcdata1, 0, PtrSize);
-	adduintxx(ctxt, gcbss1, 0, PtrSize);
 
 	last = nil;
 	datap = nil;
@@ -847,8 +998,8 @@ dodata(void)
 	sect->align = maxalign(s, SINITARR-1);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "noptrdata", 0)->sect = sect;
-	linklookup(ctxt, "enoptrdata", 0)->sect = sect;
+	linklookup(ctxt, "runtime.noptrdata", 0)->sect = sect;
+	linklookup(ctxt, "runtime.enoptrdata", 0)->sect = sect;
 	for(; s != nil && s->type < SINITARR; s = s->next) {
 		datsize = aligndatsize(datsize, s);
 		s->sect = sect;
@@ -878,8 +1029,10 @@ dodata(void)
 	sect->align = maxalign(s, SBSS-1);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "data", 0)->sect = sect;
-	linklookup(ctxt, "edata", 0)->sect = sect;
+	linklookup(ctxt, "runtime.data", 0)->sect = sect;
+	linklookup(ctxt, "runtime.edata", 0)->sect = sect;
+	gcdata = linklookup(ctxt, "runtime.gcdata", 0);
+	proggeninit(&gen, gcdata);
 	for(; s != nil && s->type < SBSS; s = s->next) {
 		if(s->type == SINITARR) {
 			ctxt->cursym = s;
@@ -889,40 +1042,38 @@ dodata(void)
 		s->type = SDATA;
 		datsize = aligndatsize(datsize, s);
 		s->value = datsize - sect->vaddr;
-		gcaddsym(gcdata1, s, datsize - sect->vaddr);  // gc
+		proggenaddsym(&gen, s);  // gc
 		growdatsize(&datsize, s);
 	}
 	sect->len = datsize - sect->vaddr;
-
-	adduintxx(ctxt, gcdata1, GC_END, PtrSize);
-	setuintxx(ctxt, gcdata1, 0, sect->len, PtrSize);
+	proggenfini(&gen, sect->len);  // gc
 
 	/* bss */
 	sect = addsection(&segdata, ".bss", 06);
 	sect->align = maxalign(s, SNOPTRBSS-1);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "bss", 0)->sect = sect;
-	linklookup(ctxt, "ebss", 0)->sect = sect;
+	linklookup(ctxt, "runtime.bss", 0)->sect = sect;
+	linklookup(ctxt, "runtime.ebss", 0)->sect = sect;
+	gcbss = linklookup(ctxt, "runtime.gcbss", 0);
+	proggeninit(&gen, gcbss);
 	for(; s != nil && s->type < SNOPTRBSS; s = s->next) {
 		s->sect = sect;
 		datsize = aligndatsize(datsize, s);
 		s->value = datsize - sect->vaddr;
-		gcaddsym(gcbss1, s, datsize - sect->vaddr);  // gc
+		proggenaddsym(&gen, s);  // gc
 		growdatsize(&datsize, s);
 	}
 	sect->len = datsize - sect->vaddr;
-
-	adduintxx(ctxt, gcbss1, GC_END, PtrSize);
-	setuintxx(ctxt, gcbss1, 0, sect->len, PtrSize);
+	proggenfini(&gen, sect->len);  // gc
 
 	/* pointer-free bss */
 	sect = addsection(&segdata, ".noptrbss", 06);
 	sect->align = maxalign(s, SNOPTRBSS);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "noptrbss", 0)->sect = sect;
-	linklookup(ctxt, "enoptrbss", 0)->sect = sect;
+	linklookup(ctxt, "runtime.noptrbss", 0)->sect = sect;
+	linklookup(ctxt, "runtime.enoptrbss", 0)->sect = sect;
 	for(; s != nil && s->type == SNOPTRBSS; s = s->next) {
 		datsize = aligndatsize(datsize, s);
 		s->sect = sect;
@@ -930,7 +1081,7 @@ dodata(void)
 		growdatsize(&datsize, s);
 	}
 	sect->len = datsize - sect->vaddr;
-	linklookup(ctxt, "end", 0)->sect = sect;
+	linklookup(ctxt, "runtime.end", 0)->sect = sect;
 
 	// 6g uses 4-byte relocation offsets, so the entire segment must fit in 32 bits.
 	if(datsize != (uint32)datsize) {
@@ -951,9 +1102,9 @@ dodata(void)
 		sect->len = datsize;
 	} else {
 		// Might be internal linking but still using cgo.
-		// In that case, the only possible STLSBSS symbol is tlsgm.
+		// In that case, the only possible STLSBSS symbol is runtime.tlsg.
 		// Give it offset 0, because it's the only thing here.
-		if(s != nil && s->type == STLSBSS && strcmp(s->name, "runtime.tlsgm") == 0) {
+		if(s != nil && s->type == STLSBSS && strcmp(s->name, "runtime.tlsg") == 0) {
 			s->value = 0;
 			s = s->next;
 		}
@@ -1001,8 +1152,8 @@ dodata(void)
 	sect->align = maxalign(s, STYPELINK-1);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = 0;
-	linklookup(ctxt, "rodata", 0)->sect = sect;
-	linklookup(ctxt, "erodata", 0)->sect = sect;
+	linklookup(ctxt, "runtime.rodata", 0)->sect = sect;
+	linklookup(ctxt, "runtime.erodata", 0)->sect = sect;
 	for(; s != nil && s->type < STYPELINK; s = s->next) {
 		datsize = aligndatsize(datsize, s);
 		s->sect = sect;
@@ -1017,8 +1168,8 @@ dodata(void)
 	sect->align = maxalign(s, STYPELINK);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "typelink", 0)->sect = sect;
-	linklookup(ctxt, "etypelink", 0)->sect = sect;
+	linklookup(ctxt, "runtime.typelink", 0)->sect = sect;
+	linklookup(ctxt, "runtime.etypelink", 0)->sect = sect;
 	for(; s != nil && s->type == STYPELINK; s = s->next) {
 		datsize = aligndatsize(datsize, s);
 		s->sect = sect;
@@ -1033,8 +1184,8 @@ dodata(void)
 	sect->align = maxalign(s, SPCLNTAB-1);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "symtab", 0)->sect = sect;
-	linklookup(ctxt, "esymtab", 0)->sect = sect;
+	linklookup(ctxt, "runtime.symtab", 0)->sect = sect;
+	linklookup(ctxt, "runtime.esymtab", 0)->sect = sect;
 	for(; s != nil && s->type < SPCLNTAB; s = s->next) {
 		datsize = aligndatsize(datsize, s);
 		s->sect = sect;
@@ -1049,8 +1200,8 @@ dodata(void)
 	sect->align = maxalign(s, SELFROSECT-1);
 	datsize = rnd(datsize, sect->align);
 	sect->vaddr = datsize;
-	linklookup(ctxt, "pclntab", 0)->sect = sect;
-	linklookup(ctxt, "epclntab", 0)->sect = sect;
+	linklookup(ctxt, "runtime.pclntab", 0)->sect = sect;
+	linklookup(ctxt, "runtime.epclntab", 0)->sect = sect;
 	for(; s != nil && s->type < SELFROSECT; s = s->next) {
 		datsize = aligndatsize(datsize, s);
 		s->sect = sect;
@@ -1103,8 +1254,8 @@ textaddress(void)
 	// and then letting threads copy down, but probably not worth it.
 	sect = segtext.sect;
 	sect->align = funcalign;
-	linklookup(ctxt, "text", 0)->sect = sect;
-	linklookup(ctxt, "etext", 0)->sect = sect;
+	linklookup(ctxt, "runtime.text", 0)->sect = sect;
+	linklookup(ctxt, "runtime.etext", 0)->sect = sect;
 	va = INITTEXT;
 	sect->vaddr = va;
 	for(sym = ctxt->textp; sym != nil; sym = sym->next) {
@@ -1215,32 +1366,32 @@ address(void)
 			sub->value += sym->value;
 	}
 
-	xdefine("text", STEXT, text->vaddr);
-	xdefine("etext", STEXT, text->vaddr + text->len);
-	xdefine("rodata", SRODATA, rodata->vaddr);
-	xdefine("erodata", SRODATA, rodata->vaddr + rodata->len);
-	xdefine("typelink", SRODATA, typelink->vaddr);
-	xdefine("etypelink", SRODATA, typelink->vaddr + typelink->len);
+	xdefine("runtime.text", STEXT, text->vaddr);
+	xdefine("runtime.etext", STEXT, text->vaddr + text->len);
+	xdefine("runtime.rodata", SRODATA, rodata->vaddr);
+	xdefine("runtime.erodata", SRODATA, rodata->vaddr + rodata->len);
+	xdefine("runtime.typelink", SRODATA, typelink->vaddr);
+	xdefine("runtime.etypelink", SRODATA, typelink->vaddr + typelink->len);
 
-	sym = linklookup(ctxt, "gcdata", 0);
-	xdefine("egcdata", SRODATA, symaddr(sym) + sym->size);
-	linklookup(ctxt, "egcdata", 0)->sect = sym->sect;
+	sym = linklookup(ctxt, "runtime.gcdata", 0);
+	xdefine("runtime.egcdata", SRODATA, symaddr(sym) + sym->size);
+	linklookup(ctxt, "runtime.egcdata", 0)->sect = sym->sect;
 
-	sym = linklookup(ctxt, "gcbss", 0);
-	xdefine("egcbss", SRODATA, symaddr(sym) + sym->size);
-	linklookup(ctxt, "egcbss", 0)->sect = sym->sect;
+	sym = linklookup(ctxt, "runtime.gcbss", 0);
+	xdefine("runtime.egcbss", SRODATA, symaddr(sym) + sym->size);
+	linklookup(ctxt, "runtime.egcbss", 0)->sect = sym->sect;
 
-	xdefine("symtab", SRODATA, symtab->vaddr);
-	xdefine("esymtab", SRODATA, symtab->vaddr + symtab->len);
-	xdefine("pclntab", SRODATA, pclntab->vaddr);
-	xdefine("epclntab", SRODATA, pclntab->vaddr + pclntab->len);
-	xdefine("noptrdata", SNOPTRDATA, noptr->vaddr);
-	xdefine("enoptrdata", SNOPTRDATA, noptr->vaddr + noptr->len);
-	xdefine("bss", SBSS, bss->vaddr);
-	xdefine("ebss", SBSS, bss->vaddr + bss->len);
-	xdefine("data", SDATA, data->vaddr);
-	xdefine("edata", SDATA, data->vaddr + data->len);
-	xdefine("noptrbss", SNOPTRBSS, noptrbss->vaddr);
-	xdefine("enoptrbss", SNOPTRBSS, noptrbss->vaddr + noptrbss->len);
-	xdefine("end", SBSS, segdata.vaddr + segdata.len);
+	xdefine("runtime.symtab", SRODATA, symtab->vaddr);
+	xdefine("runtime.esymtab", SRODATA, symtab->vaddr + symtab->len);
+	xdefine("runtime.pclntab", SRODATA, pclntab->vaddr);
+	xdefine("runtime.epclntab", SRODATA, pclntab->vaddr + pclntab->len);
+	xdefine("runtime.noptrdata", SNOPTRDATA, noptr->vaddr);
+	xdefine("runtime.enoptrdata", SNOPTRDATA, noptr->vaddr + noptr->len);
+	xdefine("runtime.bss", SBSS, bss->vaddr);
+	xdefine("runtime.ebss", SBSS, bss->vaddr + bss->len);
+	xdefine("runtime.data", SDATA, data->vaddr);
+	xdefine("runtime.edata", SDATA, data->vaddr + data->len);
+	xdefine("runtime.noptrbss", SNOPTRBSS, noptrbss->vaddr);
+	xdefine("runtime.enoptrbss", SNOPTRBSS, noptrbss->vaddr + noptrbss->len);
+	xdefine("runtime.end", SBSS, segdata.vaddr + segdata.len);
 }

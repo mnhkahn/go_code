@@ -35,6 +35,11 @@
 
 #define	NREGVAR	32	/* 16 general + 16 floating */
 #define	REGBITS	((uint32)0xffffffff)
+/*c2go enum {
+	NREGVAR = 32,
+	REGBITS = 0xffffffff,
+};
+*/
 
 static	Reg*	firstr;
 static	int	first	= 1;
@@ -839,7 +844,7 @@ prop(Reg *r, Bits ref, Bits cal)
 					if(v == v1 || ((cal.b[j/32]>>(j&31))&1) == 0) {
 						for(; v1 != nil; v1 = v1->nextinnode) {
 							j = v1 - var;
-							cal.b[j/32] |= 1<<(j&31);
+							cal.b[j/32] |= 1UL<<(j&31);
 						}
 					}
 				}
@@ -1186,6 +1191,7 @@ void
 addreg(Adr *a, int rn)
 {
 	a->sym = nil;
+	a->node = nil;
 	a->offset = 0;
 	a->type = rn;
 

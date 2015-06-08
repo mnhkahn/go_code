@@ -11,10 +11,13 @@
 
 #define TEXTFLAG reg
 
-#define REGALLOC_R0 0
-#define REGALLOC_RMAX REGEXT
-#define REGALLOC_F0 NREG
-#define REGALLOC_FMAX (REGALLOC_F0 + FREGEXT)
+enum
+{
+	REGALLOC_R0 = 0,
+	REGALLOC_RMAX = REGEXT,
+	REGALLOC_F0 = NREG,
+	REGALLOC_FMAX = REGALLOC_F0 + FREGEXT,
+};
 
 EXTERN	int32	dynloc;
 EXTERN	uchar	reg[REGALLOC_FMAX+1];
@@ -106,7 +109,6 @@ void	split64(Node*, Node*, Node*);
 void	splitclean(void);
 Node*	ncon(uint32 i);
 void	gtrack(Sym*);
-void	gargsize(int32);
 
 /*
  * obj.c

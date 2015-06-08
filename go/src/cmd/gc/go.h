@@ -269,6 +269,7 @@ struct	Node
 	uchar	colas;		// OAS resulting from :=
 	uchar	diag;		// already printed error about this
 	uchar	noescape;	// func arguments do not escape
+	uchar	nosplit;	// func should not execute on separate stack
 	uchar	builtin;	// built-in name, like len or close
 	uchar	walkdef;
 	uchar	typecheck;
@@ -282,6 +283,7 @@ struct	Node
 	uchar	addrtaken;	// address taken, even if not moved to heap
 	uchar	dupok;	// duplicate definitions ok (for func)
 	uchar	wrapper;	// is method wrapper (for func)
+	uchar	reslice;	// this is a reslice x = x[0:y] or x = append(x, ...)
 	schar	likely; // likeliness of if statement
 	uchar	hasbreak;	// has break statement
 	uchar	needzero; // if it contains pointers, needs to be zeroed on function entry
@@ -380,7 +382,6 @@ enum
 	SymExported	= 1<<2,	// already written out by export
 	SymUniq		= 1<<3,
 	SymSiggen	= 1<<4,
-	SymGcgen	= 1<<5,
 };
 
 struct	Sym
@@ -447,7 +448,6 @@ enum
 	OSUB,	// x - y
 	OOR,	// x | y
 	OXOR,	// x ^ y
-	OADDPTR,	// ptr + uintptr, inserted by compiler only, used to avoid unsafe type changes during codegen
 	OADDSTR,	// s + "foo"
 	OADDR,	// &x
 	OANDAND,	// b0 && b1
@@ -573,7 +573,6 @@ enum
 	OTINTER,	// interface{}
 	OTFUNC,	// func()
 	OTARRAY,	// []int, [8]int, [N]int or [...]int
-	OTPAREN,	// (T)
 
 	// misc
 	ODDD,	// func f(args ...int) or f(l...) or var a = [...]int{0, 1, 2}.
@@ -975,11 +974,14 @@ EXTERN	int	funcdepth;
 EXTERN	int	typecheckok;
 EXTERN	int	compiling_runtime;
 EXTERN	int	compiling_wrappers;
+EXTERN	int	inl_nonlocal;
+EXTERN	int	use_writebarrier;
 EXTERN	int	pure_go;
 EXTERN	char*	flag_installsuffix;
 EXTERN	int	flag_race;
 EXTERN	int	flag_largemodel;
 EXTERN	int	noescape;
+EXTERN	int	nosplit;
 EXTERN	int	debuglive;
 EXTERN	Link*	ctxt;
 
@@ -1169,6 +1171,7 @@ void	cgen_callmeth(Node *n, int proc);
 void	cgen_eface(Node* n, Node* res);
 void	cgen_slice(Node* n, Node* res);
 void	clearlabels(void);
+void	clearslim(Node*);
 void	checklabels(void);
 int	dotoffset(Node *n, int64 *oary, Node **nn);
 void	gen(Node *n);
@@ -1284,6 +1287,7 @@ LSym*	linksym(Sym*);
  *	order.c
  */
 void	order(Node *fn);
+void	orderstmtinplace(Node **stmt);
 
 /*
  *	range.c
@@ -1302,7 +1306,6 @@ Sym*	typenamesym(Type *t);
 Sym*	tracksym(Type *t);
 Sym*	typesymprefix(char *prefix, Type *t);
 int	haspointers(Type *t);
-void	usefield(Node*);
 Type*	hiter(Type* t);
 
 /*
@@ -1364,6 +1367,7 @@ int	is64(Type *t);
 int	isbadimport(Strlit *s);
 int	isblank(Node *n);
 int	isblanksym(Sym *s);
+int	isdirectiface(Type*);
 int	isfixedarray(Type *t);
 int	isideal(Type *t);
 int	isinter(Type *t);
@@ -1372,6 +1376,7 @@ int	isnilinter(Type *t);
 int	isptrto(Type *t, int et);
 int	isslice(Type *t);
 int	istype(Type *t, int et);
+int	iszero(Node *n);
 void	linehist(char *file, int32 off, int relative);
 NodeList*	list(NodeList *l, Node *n);
 NodeList*	list1(Node *n);
@@ -1464,7 +1469,9 @@ void	walkstmt(Node **np);
 void	walkstmtlist(NodeList *l);
 Node*	conv(Node*, Type*);
 int	candiscard(Node*);
+int	needwritebarrier(Node*, Node*);
 Node*	outervalue(Node*);
+void	usefield(Node*);
 
 /*
  *	arch-specific ggen.c/gsubr.c/gobj.c/pgen.c/plive.c
@@ -1505,7 +1512,7 @@ void	gdata(Node*, Node*, int);
 void	gdatacomplex(Node*, Mpcplx*);
 void	gdatastring(Node*, Strlit*);
 void	ggloblnod(Node *nam);
-void	ggloblsym(Sym *s, int32 width, int dupok, int rodata);
+void	ggloblsym(Sym *s, int32 width, int8 flags);
 void	gvardef(Node*);
 void	gvarkill(Node*);
 Prog*	gjmp(Prog*);
@@ -1514,6 +1521,7 @@ void	movelarge(NodeList*);
 int	isfat(Type*);
 void	linkarchinit(void);
 void	liveness(Node*, Prog*, Sym*, Sym*);
+void	twobitwalktype1(Type*, vlong*, Bvec*);
 void	markautoused(Prog*);
 Plist*	newplist(void);
 Node*	nodarg(Type*, int);

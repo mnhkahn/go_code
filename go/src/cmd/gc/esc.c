@@ -495,7 +495,7 @@ esc(EscState *e, Node *n, Node *up)
 
 	case ORANGE:
 		// Everything but fixed array is a dereference.
-		if(isfixedarray(n->type) && n->list->next)
+		if(isfixedarray(n->type) && n->list && n->list->next)
 			escassign(e, n->list->next->n, n->right);
 		break;
 
@@ -1110,6 +1110,7 @@ escflood(EscState *e, Node *dst)
 // pass all the tests we have written so far, which we assume matches
 // the level of complexity we want the escape analysis code to handle.
 #define MinLevel (-2)
+/*c2go enum { MinLevel = -2 };*/
 
 static void
 escwalk(EscState *e, int level, Node *dst, Node *src)

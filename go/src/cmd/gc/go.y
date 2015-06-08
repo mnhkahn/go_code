@@ -460,11 +460,13 @@ simple_stmt:
 |	expr LINC
 	{
 		$$ = nod(OASOP, $1, nodintconst(1));
+		$$->implicit = 1;
 		$$->etype = OADD;
 	}
 |	expr LDEC
 	{
 		$$ = nod(OASOP, $1, nodintconst(1));
+		$$->implicit = 1;
 		$$->etype = OSUB;
 	}
 
@@ -612,6 +614,11 @@ range_stmt:
 		$$->list = $1;
 		$$->colas = 1;
 		colasdefn($1, $$);
+	}
+|	LRANGE expr
+	{
+		$$ = nod(ORANGE, N, $2);
+		$$->etype = 0; // := flag
 	}
 
 for_header:
@@ -1180,7 +1187,7 @@ ntype:
 |	dotname
 |	'(' ntype ')'
 	{
-		$$ = nod(OTPAREN, $2, N);
+		$$ = $2;
 	}
 
 non_expr_type:
@@ -1199,7 +1206,7 @@ non_recvchantype:
 |	dotname
 |	'(' ntype ')'
 	{
-		$$ = nod(OTPAREN, $2, N);
+		$$ = $2;
 	}
 
 convtype:
@@ -1311,6 +1318,7 @@ xfndcl:
 		$$->nbody = $3;
 		$$->endlineno = lineno;
 		$$->noescape = noescape;
+		$$->nosplit = nosplit;
 		funcbody($$);
 	}
 
@@ -1365,8 +1373,6 @@ fndcl:
 			yyerror("bad receiver in method");
 			break;
 		}
-		if(rcvr->right->op == OTPAREN || (rcvr->right->op == OIND && rcvr->right->left->op == OTPAREN))
-			yyerror("cannot parenthesize receiver type");
 
 		t = nod(OTFUNC, rcvr, N);
 		t->list = $6;
@@ -1495,6 +1501,7 @@ xdcl_list:
 			testdclstack();
 		nointerface = 0;
 		noescape = 0;
+		nosplit = 0;
 	}
 
 vardcl_list:

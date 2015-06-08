@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // 64-bit MD5 (does full MD5 but returns 64 bits only).
-// Translation of ../../pkg/crypto/md5/md5*.go.
+// Translation of ../../crypto/md5/md5*.go.
 
 #include <u.h>
 #include <libc.h>
@@ -20,7 +20,15 @@ enum {
 #define _Init1 0xEFCDAB89
 #define _Init2 0x98BADCFE
 #define _Init3 0x10325476
-
+/*c2go
+enum {
+	_Init0 = 0x67452301,
+	_Init1 = 0xEFCDAB89,
+	_Init2 = 0x98BADCFE,
+	_Init3 = 0x10325476
+};
+*/
+	
 void
 md5reset(MD5 *d)
 {

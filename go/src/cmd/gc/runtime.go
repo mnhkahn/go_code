@@ -12,7 +12,7 @@ package PACKAGE
 
 // emitted by compiler, not referred to by go programs
 
-func new(typ *byte) *any
+func newobject(typ *byte) *any
 func panicindex()
 func panicslice()
 func panicdivide()
@@ -20,12 +20,13 @@ func throwreturn()
 func throwinit()
 func panicwrap(string, string, string)
 
-func panic(interface{})
-func recover(*int32) interface{}
+func gopanic(interface{})
+func gorecover(*int32) interface{}
 
 func printbool(bool)
 func printfloat(float64)
 func printint(int64)
+func printhex(uint64)
 func printuint(uint64)
 func printcomplex(complex128)
 func printstring(string)
@@ -35,7 +36,6 @@ func printeface(any)
 func printslice(any)
 func printnl()
 func printsp()
-func goprintf()
 
 func concatstring2(string, string) string
 func concatstring3(string, string, string) string
@@ -53,7 +53,7 @@ func stringtoslicebyte(string) []byte
 func stringtoslicerune(string) []rune
 func stringiter(string, int) int
 func stringiter2(string, int) (retk int, retv rune)
-func copy(to any, fr any, wid uintptr) int
+func slicecopy(to any, fr any, wid uintptr) int
 func slicestringcopy(to any, fr any) int
 
 // interface conversions
@@ -84,8 +84,6 @@ func efaceeq(i1 any, i2 any) (ret bool)
 func ifacethash(i1 any) (ret uint32)
 func efacethash(i1 any) (ret uint32)
 
-func equal(typ *byte, x1, x2 any) (ret bool)
-
 // *byte is really *runtime.Type
 func makemap(mapType *byte, hint int64) (hmap map[any]any)
 func mapaccess1(mapType *byte, hmap map[any]any, key *any) (val *any)
@@ -108,11 +106,25 @@ func chanrecv2(chanType *byte, hchan <-chan any, elem *any) bool
 func chansend1(chanType *byte, hchan chan<- any, elem *any)
 func closechan(hchan any)
 
+// *byte is really *runtime.Type
+func writebarrierptr(dst *any, src any)
+func writebarrierstring(dst *any, src any)
+func writebarrierslice(dst *any, src any)
+func writebarrieriface(dst *any, src any)
+
+// The unused *byte argument makes sure that src is 2-pointer-aligned,
+// which is the maximum alignment on NaCl amd64p32
+// (and possibly on 32-bit systems if we start 64-bit aligning uint64s).
+func writebarrierfat2(dst *any, _ *byte, src any)
+func writebarrierfat3(dst *any, _ *byte, src any)
+func writebarrierfat4(dst *any, _ *byte, src any)
+func writebarrierfat(typ *byte, dst *any, src *any)
+
 func selectnbsend(chanType *byte, hchan chan<- any, elem *any) bool
 func selectnbrecv(chanType *byte, elem *any, hchan <-chan any) bool
 func selectnbrecv2(chanType *byte, elem *any, received *bool, hchan <-chan any) bool
 
-func newselect(size int32) (sel *byte)
+func newselect(sel *byte, selsize int64, size int32)
 func selectsend(sel *byte, hchan chan<- any, elem *any) (selected bool)
 func selectrecv(sel *byte, hchan <-chan any, elem *any) (selected bool)
 func selectrecv2(sel *byte, hchan <-chan any, elem *any, received *bool) (selected bool)
@@ -124,12 +136,12 @@ func makeslice(typ *byte, nel int64, cap int64) (ary []any)
 func growslice(typ *byte, old []any, n int64) (ary []any)
 func memmove(to *any, frm *any, length uintptr)
 
-func memequal(eq *bool, size uintptr, x, y *any)
-func memequal8(eq *bool, size uintptr, x, y *any)
-func memequal16(eq *bool, size uintptr, x, y *any)
-func memequal32(eq *bool, size uintptr, x, y *any)
-func memequal64(eq *bool, size uintptr, x, y *any)
-func memequal128(eq *bool, size uintptr, x, y *any)
+func memequal(x, y *any, size uintptr) bool
+func memequal8(x, y *any, size uintptr) bool
+func memequal16(x, y *any, size uintptr) bool
+func memequal32(x, y *any, size uintptr) bool
+func memequal64(x, y *any, size uintptr) bool
+func memequal128(x, y *any, size uintptr) bool
 
 // only used on 32-bit
 func int64div(int64, int64) int64
