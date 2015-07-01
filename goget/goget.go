@@ -8,6 +8,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ func NewGoGet() *GoGet {
 	flag.Parse()
 	get.Url = *urlFlag
 	get.Cnt = *cntFlag
+
 	return get
 }
 
@@ -47,6 +49,7 @@ var cntFlag = flag.Int("c", 1, "Fetch concurrently counts")
 
 func main() {
 	get := NewGoGet()
+
 	download_start := time.Now()
 
 	req, err := http.NewRequest("HEAD", get.Url, nil)
@@ -82,11 +85,26 @@ func main() {
 		}
 		range_start += range_interval
 	}
+	// Check if the download has paused.
+	for i := 0; i < len(get.DownloadRange); i++ {
+		range_i := fmt.Sprintf("%d-%d", get.DownloadRange[i][0], get.DownloadRange[i][1])
+		temp_file, err := os.OpenFile(get.FilePath+"."+range_i, os.O_RDONLY|os.O_APPEND, 0)
+		if err != nil {
+			temp_file, _ = os.Create(get.FilePath + "." + range_i)
+		} else {
+			fi, err := temp_file.Stat()
+			if err == nil {
+				get.DownloadRange[i][0] += int(fi.Size())
+			}
+		}
+		get.TempFiles = append(get.TempFiles, temp_file)
+	}
 
+	go get.Watch()
 	get.Latch = get.Cnt
 	for i, _ := range get.DownloadRange {
 		get.WG.Add(1)
-		go Download(i, get)
+		go get.Download(i)
 	}
 
 	get.WG.Wait()
@@ -103,20 +121,24 @@ func main() {
 	log.Printf("Download complete and store file %s with %v.\n", get.FilePath, time.Now().Sub(download_start))
 	defer func() {
 		for i := 0; i < len(get.TempFiles); i++ {
-			os.Remove(get.TempFiles[i].Name())
-			log.Printf("Remove temp file %s.\n", get.TempFiles[i].Name())
+			err := os.Remove(get.TempFiles[i].Name())
+			if err != nil {
+				log.Printf("Remove temp file %s error %v.\n", get.TempFiles[i].Name(), err)
+			} else {
+				log.Printf("Remove temp file %s.\n", get.TempFiles[i].Name())
+			}
 		}
 	}()
 }
 
-func Download(i int, get *GoGet) {
+func (get *GoGet) Download(i int) {
 	defer get.WG.Done()
-
+	if get.DownloadRange[i][0] > get.DownloadRange[i][1] {
+		return
+	}
 	range_i := fmt.Sprintf("%d-%d", get.DownloadRange[i][0], get.DownloadRange[i][1])
-	log.Printf("Download #%d %s bytes.\n", i, range_i)
+	log.Printf("Download #%d bytes %s.\n", i, range_i)
 
-	temp_file, _ := os.Create(get.FilePath + "." + range_i)
-	get.TempFiles = append(get.TempFiles, temp_file)
 	defer get.TempFiles[i].Close()
 
 	req, err := http.NewRequest("GET", get.Url, nil)
@@ -126,7 +148,18 @@ func Download(i int, get *GoGet) {
 	if err != nil {
 		log.Printf("Download #%d error %v.\n", i, err)
 	} else {
-		io.Copy(get.TempFiles[i], resp.Body)
-		log.Printf("Download #%d complete.\n", i)
+		cnt, err := io.Copy(get.TempFiles[i], resp.Body)
+		if cnt == int64(get.DownloadRange[i][1]-get.DownloadRange[i][0]+1) {
+			log.Printf("Download #%d complete.\n", i)
+		} else {
+			req_dump, _ := httputil.DumpRequest(req, false)
+			resp_dump, _ := httputil.DumpResponse(resp, true)
+			log.Panicf("Download error %d %v, expect %d-%d, but got %d.\nRequest: %s\nResponse: %s\n", resp.StatusCode, err, get.DownloadRange[i][0], get.DownloadRange[i][1], cnt, string(req_dump), string(resp_dump))
+		}
 	}
+}
+
+// http://stackoverflow.com/questions/15714126/how-to-update-command-line-output
+func (get *GoGet) Watch() {
+	fmt.Printf("[=================>]\n")
 }
