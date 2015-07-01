@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,7 +58,7 @@ func main() {
 		log.Panicf("Get %s error %v.\n", get.Url, err)
 	}
 	get.MediaType, get.MediaParams, _ = mime.ParseMediaType(get.Header.Get("Content-Disposition"))
-	get.ContentLength, _ = strconv.Atoi(get.Header.Get("Content-Length"))
+	get.ContentLength = int(resp.ContentLength)
 	if strings.HasSuffix(get.FilePath, "/") {
 		get.FilePath += get.MediaParams["filename"]
 	}
