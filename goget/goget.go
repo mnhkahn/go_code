@@ -15,17 +15,23 @@ import (
 	"time"
 )
 
+const (
+	DEFAULT_DOWNLOAD_BLOCK int64 = 4096
+)
+
 type GoGet struct {
 	Url           string
 	Cnt           int
+	DownloadBlock int64
+	CostomCnt     int
 	Latch         int
 	Header        http.Header
 	MediaType     string
 	MediaParams   map[string]string
 	FilePath      string // 包括路径和文件名
 	GetClient     *http.Client
-	ContentLength int
-	DownloadRange [][]int
+	ContentLength int64
+	DownloadRange [][]int64
 	File          *os.File
 	TempFiles     []*os.File
 	WG            sync.WaitGroup
@@ -38,13 +44,14 @@ func NewGoGet() *GoGet {
 
 	flag.Parse()
 	get.Url = *urlFlag
-	get.Cnt = *cntFlag
+	get.DownloadBlock = DEFAULT_DOWNLOAD_BLOCK
 
 	return get
 }
 
 var urlFlag = flag.String("u", "http://7b1h1l.com1.z0.glb.clouddn.com/bryce.jpg", "Fetch file url")
-var cntFlag = flag.Int("c", 1, "Fetch concurrently counts")
+
+// var cntFlag = flag.Int("c", 1, "Fetch concurrently counts")
 
 func main() {
 	get := NewGoGet()
@@ -58,7 +65,8 @@ func main() {
 		log.Panicf("Get %s error %v.\n", get.Url, err)
 	}
 	get.MediaType, get.MediaParams, _ = mime.ParseMediaType(get.Header.Get("Content-Disposition"))
-	get.ContentLength = int(resp.ContentLength)
+	get.ContentLength = resp.ContentLength
+	get.Cnt = int(math.Ceil(float64(get.ContentLength / get.DownloadBlock)))
 	if strings.HasSuffix(get.FilePath, "/") {
 		get.FilePath += get.MediaParams["filename"]
 	}
@@ -66,7 +74,7 @@ func main() {
 	if err != nil {
 		log.Panicf("Create file %s error %v.\n", get.FilePath, err)
 	}
-	log.Printf("Get %s MediaType:%s, Filename:%s, Length %d.\n", get.Url, get.MediaType, get.MediaParams["filename"], get.ContentLength)
+	log.Printf("Get %s MediaType:%s, Filename:%s, Size %d.\n", get.Url, get.MediaType, get.MediaParams["filename"], get.ContentLength)
 	if get.Header.Get("Accept-Ranges") != "" {
 		log.Printf("Server %s support Range by %s.\n", get.Header.Get("Server"), get.Header.Get("Accept-Ranges"))
 	} else {
@@ -74,15 +82,15 @@ func main() {
 	}
 
 	log.Printf("Start to download %s with %d thread.\n", get.MediaParams["filename"], get.Cnt)
-	range_start, range_interval := 0, int(math.Ceil(float64(get.ContentLength/get.Cnt)))
+	var range_start int64 = 0
 	for i := 0; i < get.Cnt; i++ {
 		if i != get.Cnt-1 {
-			get.DownloadRange = append(get.DownloadRange, []int{range_start, range_start + range_interval - 1})
+			get.DownloadRange = append(get.DownloadRange, []int64{range_start, range_start + get.DownloadBlock - 1})
 		} else {
 			// 最后一块
-			get.DownloadRange = append(get.DownloadRange, []int{range_start, get.ContentLength - 1})
+			get.DownloadRange = append(get.DownloadRange, []int64{range_start, get.ContentLength - 1})
 		}
-		range_start += range_interval
+		range_start += get.DownloadBlock
 	}
 	// Check if the download has paused.
 	for i := 0; i < len(get.DownloadRange); i++ {
@@ -93,7 +101,7 @@ func main() {
 		} else {
 			fi, err := temp_file.Stat()
 			if err == nil {
-				get.DownloadRange[i][0] += int(fi.Size())
+				get.DownloadRange[i][0] += fi.Size()
 			}
 		}
 		get.TempFiles = append(get.TempFiles, temp_file)
