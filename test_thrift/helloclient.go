@@ -1,17 +1,18 @@
 package main
 
 import (
-	// "crypto/tls"
 	"fmt"
 	"git.apache.org/thrift.git/lib/go/thrift"
-	"hello"
+	"go_code/test_thrift/hello"
 )
 
 func handleClient(client *hello.HelloClient) error {
-
 	str, err := client.HelloString("")
 	fmt.Println(str)
 	fmt.Println("----------------")
+
+	res, err := client.HelloPair()
+	fmt.Println(res.String())
 	return err
 }
 
@@ -30,7 +31,6 @@ func runClient(transportFactory thrift.TTransportFactory, protocolFactory thrift
 	if err := transport.Open(); err != nil {
 		return err
 	}
-	fmt.Println(transport, protocolFactory)
 	return handleClient(hello.NewHelloClientFactory(transport, protocolFactory))
 }
 

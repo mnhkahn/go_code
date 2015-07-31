@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"git.apache.org/thrift.git/lib/go/thrift"
-	"go_code/test_thrift/hello"
+	hello "go_code/test_thrift/hello1"
 )
 
 func runServer(transportFactory thrift.TTransportFactory, protocolFactory thrift.TProtocolFactory, addr string) error {

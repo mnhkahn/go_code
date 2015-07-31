@@ -4,7 +4,7 @@ import (
 	// "crypto/tls"
 	// "fmt"
 	// "git.apache.org/thrift.git/lib/go/thrift"
-	"go_code/test_thrift/hello"
+	hello "go_code/test_thrift/hello1"
 )
 
 type HelloHandler struct {

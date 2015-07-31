@@ -1,8 +1,8 @@
 namespace java service.demo
 
 struct Pair {
-	1: required string key
-	2: required string value
+	2: required string key
+	1: required string value
 }
 
 service Hello {
