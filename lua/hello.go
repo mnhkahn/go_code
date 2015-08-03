@@ -1,6 +1,6 @@
 /*
 https://godoc.org/github.com/yuin/gopher-lua
-/*
+*/
 
 package main
 
